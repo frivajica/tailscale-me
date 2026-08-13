@@ -55,9 +55,11 @@ toolchains produce binaries that refuse to start there).
    [admin console](https://login.tailscale.com/admin/settings/keys) and paste
    the `autoApprovers` ACL rule from
    [ACL and networking](docs/ACL_AND_NETWORKING.md).
-2. **Build** — save the key as a gitignored `.authkey` file. Optionally add
-   your SSH public key as a gitignored `.sshkey` file to enable the Windows
-   OpenSSH setup (Linux/macOS get Tailscale SSH automatically; see
+2. **Build** — save the key as a gitignored `.authkey` file (or pass it as
+   `--auth-key` / the `AUTHKEY` env var; see
+   [Getting started](docs/GETTING_STARTED.md#2-provide-the-build-time-values)).
+   Optionally add your SSH public key as a gitignored `.sshkey` file to enable
+   the Windows OpenSSH setup (Linux/macOS get Tailscale SSH automatically; see
    [Getting started](docs/GETTING_STARTED.md#ssh-access-optional)). Then run
    `bash build.sh` (or `build.bat` on Windows). One universal Windows launcher
    plus one binary per macOS/Linux platform land in `dist/`.
@@ -81,7 +83,12 @@ Full step-by-step guidance lives in the docs:
 | `platform_windows.go` | Windows logic (msiexec, `sc query`, KB2921916, UAC). |
 | `platform_darwin.go` | macOS headless logic (brew/go install, launchd, MagicDNS). |
 | `platform_linux.go` | Linux logic (tgz extract, systemd registration). |
-| `connect.go`, `log.go`, `util.go` | Shared connect/log/download helpers + parsers. |
+| `connect.go`, `log.go`, `util.go` | Connect step, session logging, shared config guards. |
+| `download.go` | Download + SHA-256 verification into a private temp dir. |
+| `parsers.go`, `poll.go` | Pure text parsers for OS/tool output; wait-loop polling. |
+| `archive.go` | Traversal-safe `.tgz` extraction (Linux installer). |
+| `ssh_script.go`, `ssh_test.go` | Windows OpenSSH PowerShell script builder + tests. |
+| `util_test.go` | Tests for parsers, downloads, extraction and version compare. |
 | `platform_package.go` | Package selection + checksum resolution (Windows/Linux). |
 | `main.exe.manifest` | UAC `requireAdministrator` manifest (Windows only). |
 | `winres/winres.json` | go-winres config that embeds the manifest. |
@@ -101,10 +108,12 @@ Full step-by-step guidance lives in the docs:
 
 ## Security
 
-- The auth key is injected at build time from a gitignored `.authkey` file via
-  `-ldflags "-X main.authKey=…"` — **no secret ever lands in git**, and the
-  repo builds cleanly without one (the resulting binary just won't
-  authenticate).
+- The auth key is injected at build time via
+  `-ldflags "-X main.authKey=…"` from the first available source — command
+  line, `AUTHKEY` env var, or gitignored `.authkey` file — **no secret ever
+  lands in git**, and the repo builds cleanly without one (the resulting
+  binary just won't authenticate). Passing the key on a command line or env
+  var can expose it in the process list / shell history, so prefer the file.
 - Any download is SHA-256 verified against the official checksum before it is
   run.
 - Because the key is embedded in the binary, anyone holding a binary can join

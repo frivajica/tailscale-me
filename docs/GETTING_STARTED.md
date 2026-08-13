@@ -38,13 +38,25 @@ the executable by the build script.
    into **Settings → Access controls**.
 6. Store the key for the build (next step), then run the build.
 
-## 2. Store the key for the build
+## 2. Provide the build-time values
 
-Create a file named `.authkey` (gitignored) in the repo root containing the key
-on a single line:
+Four build-time values control the binaries. Each is resolved in the same
+order — **command line → environment variable → gitignored file → the default
+compiled into `main.go`** — so the file-only method below is just the
+preferred, secret-safe option.
+
+| Value | Flags | Env | File (gitignored) | Default |
+| --- | --- | --- | --- | --- |
+| Tailscale auth key | `--auth-key <key>` | `AUTHKEY` | `.authkey` | placeholder (won't authenticate) |
+| Admin SSH public key (Windows) | `--ssh-key <pubkey>` | `SSHKEY` | `.sshkey` | empty (Windows SSH step skipped) |
+| Windows SSH firewall scope | `--allow-cidr <cidr>` | `ALLOWCIDR` | `.allow-cidr` | `100.64.0.0/10` |
+
+Create the files in the repo root (these are gitignored), each value on a
+single line:
 
 ```
-tskey-auth-xxxxxxxxxxxxxxxx
+tskey-auth-xxxxxxxxxxxxxxxx      # .authkey
+ssh-ed25519 AAAA…your-public-key… you@example.com   # .sshkey
 ```
 
 Then build:
@@ -53,11 +65,23 @@ Then build:
 bash build.sh
 ```
 
-- With `.authkey` present, the key is baked into the binaries.
-- Without it, the build warns and produces binaries with a placeholder that
-  will **not** authenticate — so the repo is always safe to clone and build.
-- See `.authkey.example` for the expected format; never commit a real
-  `.authkey`.
+- With a value present (any layer), it is baked into the binaries.
+- Without an auth key anywhere, the build warns and produces binaries with a
+  placeholder that will **not** authenticate — so the repo is always safe to
+  clone and build.
+- Passing values as flags or env variables works too but they can appear in
+  your shell history / process list — prefer the files. Similarly, don't put a
+  real key on a shared build machine's command line.
+- See `.authkey.example` / `.sshkey.example` for the expected formats; never
+  commit a real `.authkey`.
+- Quick example (flag beats the files):
+
+  ```bash
+  bash build.sh --auth-key "tskey-auth-xxx" --ssh-key "ssh-ed25519 AAAA… me@host"
+  ```
+  ```bat
+  build.bat --auth-key tskey-auth-xxx --ssh-key "ssh-ed25519 AAAA… me@host"
+  ```
 
 ### SSH access (optional)
 
@@ -70,7 +94,8 @@ remote gateway). Enablement differs by platform:
   see [ACL and networking](ACL_AND_NETWORKING.md#remote-ssh-access). No key
   file is needed. To disable it, build with `-ldflags "-X main.adSSH=false"`.
 - **Windows** — OpenSSH Server is set up only when you provide your SSH
-  **public** key in a gitignored `.sshkey` file in the repo root (single line):
+  **public** key — typically in a gitignored `.sshkey` file in the repo root
+  (single line), or via `--ssh-key <pubkey>` / the `SSHKEY` env var:
 
   ```
   ssh-ed25519 AAAA…your-public-key… you@example.com
@@ -80,10 +105,11 @@ remote gateway). Enablement differs by platform:
   port 22 to the Tailscale network only** (`100.64.0.0/10`). Existing OpenSSH
   installs are left alone except for that firewall scope.
 
-Optional: a gitignored `.allow-cidr` file overrides the Windows firewall scope
-(default `100.64.0.0/10`). See `.sshkey.example` / `.allow-cidr.example` for the
-format. Without `.sshkey`, only the Windows SSH step is skipped — Linux/macOS
-keep their built-in Tailscale SSH.
+Optional: a gitignored `.allow-cidr` file (or `--allow-cidr` / the `ALLOWCIDR`
+env var) overrides the Windows firewall scope (default `100.64.0.0/10`). See
+`.sshkey.example` / `.allow-cidr.example` for the format. Without `.sshkey`,
+only the Windows SSH step is skipped — Linux/macOS keep their built-in Tailscale
+SSH.
 
 ## 3. Build the binaries
 
@@ -103,9 +129,10 @@ Both scripts:
 
 1. Install `github.com/tc-hib/go-winres` and embed the
    `requireAdministrator` manifest into the Windows targets and the launcher.
-2. Inject the key from `.authkey` via `-ldflags -X main.authKey=…` (warns if
-   missing), plus the optional `.sshkey` (Windows SSH) and `.allow-cidr`
-   (Windows SSH firewall scope) values when those files exist.
+2. Resolve each build-time value (auth key, `.sshkey`, `.allow-cidr`) from the
+   first source that provides it — command line, env var, or gitignored file —
+   and inject it via `-ldflags -X …` (warns if no auth key is found anywhere).
+   See [§ 2](GETTING_STARTED.md#2-provide-the-build-time-values).
 3. Build the three Windows per-arch installers, then pack them into the
    universal `TailscaleMe-windows.exe` launcher via `tools/pack` (which also
    embeds each installer's SHA-256 so a tampered payload is rejected at run

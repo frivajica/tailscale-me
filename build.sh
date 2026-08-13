@@ -2,6 +2,48 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Build-time config can come from the command line, an environment variable,
+# a gitignored file, or main.go's default - checked in that order:
+#
+#   --auth-key <key>      -> $AUTHKEY   -> .authkey    -> placeholder (non-auth)
+#   --ssh-key <pubkey>    -> $SSHKEY    -> .sshkey     -> "" (Windows SSH off)
+#   --allow-cidr <cidr>   -> $ALLOWCIDR -> .allow-cidr -> 100.64.0.0/10
+#
+# Values passed as args/env can appear in the shell history or process list,
+# so prefer the gitignored files for repeatable builds.
+usage() {
+  cat <<'EOF'
+Usage: build.sh [options]
+
+Options:
+  --auth-key <key>     Tailscale auth key (env AUTHKEY, file .authkey)
+  --ssh-key <pubkey>   admin SSH public key for Windows OpenSSH (env SSHKEY, file .sshkey)
+  --allow-cidr <cidr>  Windows SSH firewall scope (env ALLOWCIDR, file .allow-cidr)
+  --help               show this help and exit
+
+Each value is taken from the first source that provides one: command line,
+then environment variable, then the matching gitignored file, then the
+default compiled into main.go.
+EOF
+}
+
+AUTHKEY_ARG="" SSHKEY_ARG="" ALLOWCIDR_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --auth-key)
+      [ $# -ge 2 ] || { echo "ERROR: --auth-key needs a value" >&2; exit 1; }
+      AUTHKEY_ARG="$2"; shift 2 ;;
+    --ssh-key)
+      [ $# -ge 2 ] || { echo "ERROR: --ssh-key needs a value" >&2; exit 1; }
+      SSHKEY_ARG="$2"; shift 2 ;;
+    --allow-cidr)
+      [ $# -ge 2 ] || { echo "ERROR: --allow-cidr needs a value" >&2; exit 1; }
+      ALLOWCIDR_ARG="$2"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "ERROR: unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
 export CGO_ENABLED=0
 
 go mod download 2>/dev/null || true
@@ -14,35 +56,41 @@ echo "==> Generating Windows resources (installers: 386+amd64+arm64, launcher: 3
 go-winres make --arch=386,amd64,arm64
 ( cd launcher/windows && go-winres make --arch=386 )
 
-# Read the auth key from the gitignored .authkey file (one line) so the secret
-# never lands in git. If it is missing, the build still succeeds with the
-# placeholder and the binaries will not authenticate.
+# Resolve build-time config: flag -> env -> gitignored file -> main.go default.
 LDEXTRA=""
-if [ -f .authkey ]; then
-  KEY=$(tr -d '\r\n' < .authkey)
-  if [ -n "$KEY" ]; then
-    LDEXTRA="-X main.authKey=$KEY"
-  fi
+
+# Auth key: if nothing is provided anywhere, the placeholder stays in and the
+# resulting binaries will not authenticate.
+AKEY="${AUTHKEY_ARG:-${AUTHKEY:-}}"
+if [ -z "$AKEY" ] && [ -f .authkey ]; then
+  AKEY=$(tr -d '\r\n' < .authkey)
 fi
-if [ -z "$LDEXTRA" ]; then
-  echo "WARNING: .authkey not found - building with placeholder key (will NOT authenticate)."
+if [ -n "$AKEY" ]; then
+  LDEXTRA="-X main.authKey=$AKEY"
+else
+  echo "WARNING: no auth key (--auth-key / \$AUTHKEY / .authkey) - building with placeholder key (will NOT authenticate)."
 fi
 
-# Optional SSH config, injected the same way. Both are gitignored; missing
-# files just mean the matching feature is compiled in its default state.
-if [ -f .sshkey ]; then
-  SSHKEY=$(tr -d '\r\n' < .sshkey)
-  if [ -n "$SSHKEY" ]; then
-    # Public keys contain spaces; the single quotes survive the go ldflags
-    # tokenizer so the whole key lands in main.sshKey.
-    LDEXTRA="$LDEXTRA -X 'main.sshKey=$SSHKEY'"
-  fi
+# Admin SSH public key for Windows OpenSSH: left empty, the Windows SSH step
+# is skipped (see main.go). Linux/macOS Tailscale SSH does not need it.
+SKEY="${SSHKEY_ARG:-${SSHKEY:-}}"
+if [ -z "$SKEY" ] && [ -f .sshkey ]; then
+  SKEY=$(tr -d '\r\n' < .sshkey)
 fi
-if [ -f .allow-cidr ]; then
+if [ -n "$SKEY" ]; then
+  # Public keys contain spaces; the single quotes survive the go ldflags
+  # tokenizer so the whole key lands in main.sshKey.
+  LDEXTRA="$LDEXTRA -X 'main.sshKey=$SKEY'"
+fi
+
+# Windows SSH firewall scope: the default 100.64.0.0/10 (Tailscale only) is
+# already compiled into main.go.
+CIDR="${ALLOWCIDR_ARG:-${ALLOWCIDR:-}}"
+if [ -z "$CIDR" ] && [ -f .allow-cidr ]; then
   CIDR=$(tr -d '\r\n' < .allow-cidr)
-  if [ -n "$CIDR" ]; then
-    LDEXTRA="$LDEXTRA -X main.sshAllowCIDR=$CIDR"
-  fi
+fi
+if [ -n "$CIDR" ]; then
+  LDEXTRA="$LDEXTRA -X main.sshAllowCIDR=$CIDR"
 fi
 
 # Stamp the build version into the binaries for diagnostics (git short sha, or

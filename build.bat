@@ -2,6 +2,81 @@
 setlocal
 cd /d "%~dp0"
 
+rem Build-time config can come from the command line, an environment variable,
+rem a gitignored file, or main.go's default - checked in that order. Values
+rem passed as args/env can appear in the process list, so prefer the files.
+rem
+rem   --auth-key <key>    ->  AUTHKEY env     ->  .authkey     -> placeholder
+rem   --ssh-key <pubkey>  ->  SSHKEY env      ->  .sshkey      -> "" (skip)
+rem   --allow-cidr <cidr> ->  ALLOWCIDR env   ->  .allow-cidr  -> 100.64.0.0/10
+
+set AUTHKEY_ARG=
+set SSHKEY_ARG=
+set ALLOWCIDR_ARG=
+
+:args
+if "%~1"=="" goto args_done
+if /i "%~1"=="--auth-key" (
+  if "%~2"=="" (
+    echo ERROR: --auth-key needs a value
+    goto usage_err
+  )
+  set "AUTHKEY_ARG=%~2"
+  shift
+  shift
+  goto args
+)
+if /i "%~1"=="--ssh-key" (
+  if "%~2"=="" (
+    echo ERROR: --ssh-key needs a value
+    goto usage_err
+  )
+  set "SSHKEY_ARG=%~2"
+  shift
+  shift
+  goto args
+)
+if /i "%~1"=="--allow-cidr" (
+  if "%~2"=="" (
+    echo ERROR: --allow-cidr needs a value
+    goto usage_err
+  )
+  set "ALLOWCIDR_ARG=%~2"
+  shift
+  shift
+  goto args
+)
+if /i "%~1"=="--help" goto help
+if /i "%~1"=="-h" goto help
+echo ERROR: unknown option: %~1
+goto usage_err
+
+:args_done
+goto prog
+
+:help
+call :usage
+exit /b 0
+
+:usage_err
+call :usage
+exit /b 1
+
+:usage
+echo Usage: build.bat [options]
+echo.
+echo Options:
+echo   --auth-key ^<key^>     Tailscale auth key ^(env AUTHKEY, file .authkey^)
+echo   --ssh-key ^<pubkey^>   admin SSH public key for Windows OpenSSH ^(env SSHKEY, file .sshkey^)
+echo   --allow-cidr ^<cidr^>  Windows SSH firewall scope ^(env ALLOWCIDR, file .allow-cidr^)
+echo   --help                show this help and exit
+echo.
+echo Each value is taken from the first source that provides one: command
+echo line, then environment variable, then the matching gitignored file,
+echo then the default compiled into main.go.
+exit /b 0
+
+:prog
 set CGO_ENABLED=0
 
 echo ==^> Installing go-winres (embeds the UAC manifest into Windows exe) ...
@@ -14,32 +89,40 @@ pushd launcher\windows
 go-winres make --arch=386
 popd
 
-rem Read the auth key from the gitignored .authkey file (first line) so the
-rem secret never lands in git. If it is missing, the build still succeeds with
-rem the placeholder and the binaries will not authenticate.
-rem EnableDelayedExpansion is required so the variables set inside the
-rem parenthesized blocks below (%%KEY%% etc.) expand to the freshly-assigned
+rem Resolve build-time config: flag -> env -> gitignored file -> main.go default.
+rem EnableDelayedExpansion is required so variables set inside the
+rem parenthesized blocks below (!AKEY! etc.) expand to the freshly-assigned
 rem values rather than the pre-block empty value.
 setlocal EnableDelayedExpansion
 set LDEXTRA=
-if exist .authkey (
-  set /p KEY=<.authkey
-  if defined KEY set "LDEXTRA=-X main.authKey=!KEY!"
-)
-if "%LDEXTRA%"=="" echo WARNING: .authkey not found - building with placeholder key (will NOT authenticate).
 
-rem Optional SSH config, injected the same way. Both are gitignored; missing
-rem files just mean the matching feature is compiled in its default state.
-if exist .sshkey (
+rem Auth key: if nothing is provided anywhere, the placeholder stays in and
+rem the resulting binaries will not authenticate.
+set "AKEY=%AUTHKEY_ARG%"
+if not defined AKEY set "AKEY=%AUTHKEY%"
+if not defined AKEY if exist .authkey set /p AKEY=<.authkey
+if defined AKEY (
+  set "LDEXTRA=-X main.authKey=!AKEY!"
+)
+if not defined AKEY echo WARNING: no auth key (--auth-key / AUTHKEY env / .authkey) - building with placeholder key (will NOT authenticate).
+
+rem Admin SSH public key for Windows OpenSSH: left empty, the Windows SSH step
+rem is skipped (see main.go). Linux/macOS Tailscale SSH does not need it.
+set "SKEY=%SSHKEY_ARG%"
+if not defined SKEY set "SKEY=%SSHKEY%"
+if not defined SKEY if exist .sshkey set /p SKEY=<.sshkey
+if defined SKEY (
   rem Public keys contain spaces; the single quotes survive the go ldflags
   rem tokenizer so the whole key lands in main.sshKey.
-  set /p SSHKEY=<.sshkey
-  if defined SSHKEY set "LDEXTRA=!LDEXTRA! -X 'main.sshKey=!SSHKEY!'"
+  set "LDEXTRA=!LDEXTRA! -X 'main.sshKey=!SKEY!'"
 )
-if exist .allow-cidr (
-  set /p CIDR=<.allow-cidr
-  if defined CIDR set "LDEXTRA=!LDEXTRA! -X main.sshAllowCIDR=!CIDR!"
-)
+
+rem Windows SSH firewall scope: the default 100.64.0.0/10 (Tailscale only) is
+rem already compiled into main.go.
+set "CIDR=%ALLOWCIDR_ARG%"
+if not defined CIDR set "CIDR=%ALLOWCIDR%"
+if not defined CIDR if exist .allow-cidr set /p CIDR=<.allow-cidr
+if defined CIDR set "LDEXTRA=!LDEXTRA! -X main.sshAllowCIDR=!CIDR!"
 
 rem Stamp the build version into the binaries for diagnostics (git short sha,
 rem or the date outside a git checkout).
