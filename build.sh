@@ -17,8 +17,22 @@ go-winres make
 # (Binaries produced by Go >=1.21 refuse to start on Win7/8.)
 export GOTOOLCHAIN=go1.20.14
 
+# Read the auth key from the gitignored .authkey file (one line) so the secret
+# never lands in git. If it is missing, the build still succeeds with the
+# placeholder and TailscaleMe.exe will not authenticate.
+LDEXTRA=""
+if [ -f .authkey ]; then
+  KEY=$(tr -d '\r\n' < .authkey)
+  if [ -n "$KEY" ]; then
+    LDEXTRA="-X main.authKey=$KEY"
+  fi
+fi
+if [ -z "$LDEXTRA" ]; then
+  echo "WARNING: .authkey not found - building with placeholder key (will NOT authenticate)."
+fi
+
 echo "==> Cross-compiling TailscaleMe.exe (windows/amd64) ..."
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o TailscaleMe.exe .
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w $LDEXTRA" -o TailscaleMe.exe .
 
 echo ""
 echo "Done: $(pwd)/TailscaleMe.exe"

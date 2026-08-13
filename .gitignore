@@ -4,6 +4,9 @@
 *.syso
 /tmp/
 
+# Secrets — never commit a live auth key
+.authkey
+
 # Logs
 *.log
 

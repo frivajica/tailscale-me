@@ -16,13 +16,12 @@ import (
 	"time"
 )
 
-// ---- Configuration (edit before building) ---------------------------------
+// ---- Package data filled at build time -------------------------------------
 
-// authKey is your Tailscale auth key. Generate one at admin console →
-// Settings → Keys, tagged with tag:family-biz so the ACL autoApprovers rule
-// (see ACL_Configuration.json) matches. Prefer a single-use key with a short
-// expiry since it is baked into this executable.
-const authKey = "tskey-auth-YOUR_AUTH_KEY_HERE"
+// authKey is injected at build time from the gitignored .authkey file via
+// -ldflags "-X main.authKey=...". The placeholder here keeps the repo usable
+// and is never shipped with a real key.
+var authKey = "tskey-auth-YOUR_AUTH_KEY_HERE"
 
 // subnetRoute is the LAN CIDR advertised to the tailnet. It MUST match the
 // "routes" key in your ACL autoApprovers block and should NOT overlap your own
