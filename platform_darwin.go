@@ -239,6 +239,7 @@ func upArgs() []string {
 // regardless, so failures only log a warning. NOTE: this replaces the primary
 // service's DNS servers in the OS network config (a persistent change).
 func postConnect(cli string) {
+	reportSSHStatus(cli)
 	out, err := exec.Command("route", "-n", "get", "default").CombinedOutput()
 	if err != nil {
 		step("WARNING: could not enable MagicDNS (%v).", err)

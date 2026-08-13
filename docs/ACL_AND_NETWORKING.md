@@ -54,6 +54,11 @@ Tailscale SSH on Linux/macOS):
 Replace `email@example.com` with your own account. On the default (all-allow)
 tailnet, SSH already works without these.
 
+The build can check these rules for you before you ship binaries — pass a
+Tailscale API token (`TS_API_TOKEN` or `--api-token`) and `tools/aclcheck`
+verifies your ACL and reports anything missing (add `--strict-acl` to fail the
+build). See [Getting started — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional).
+
 ## Enable route acceptance on your own devices
 
 For the remote LAN to be reachable from a device in your tailnet, that device
@@ -86,21 +91,54 @@ SSH into the deployed machines is scoped to the tailnet only:
   (`tailscale up --ssh`), enabled by **default**. It answers **only on the
   machine's Tailscale IP**, so nothing on the LAN or internet can reach it —
   the ACL `ssh` rule is the only gate. Log in with `ssh user@<hostname>`
-  (MagicDNS). If the machine already runs its own `sshd` on port 22, the tool
+  (MagicDNS). After connecting, the tool checks `tailscale status` and confirms
+  the SSH server is actually running, or warns you that your ACL is missing the
+  `ssh` rule. If the machine already runs its own `sshd` on port 22, the tool
   logs a warning and connects without `--ssh`; that existing server stays
   reachable over the tailnet.
 - **Windows** — SSH is set up only when a `.sshkey` was embedded at build time.
   The tool installs/uses **OpenSSH Server** and **scopes the Windows firewall
   for port 22 to the Tailscale address range** (`100.64.0.0/10`, plus
   Tailscale's IPv6 `fd7a:115c:a1e0::/48`). LAN and internet callers are
-  dropped, so SSH works only from the tailnet. Log in with
-  `ssh <windows-username>@<hostname>`. Notes:
-  - the Windows account must have a **password** and be in the **Administrators**
-    group (the key is installed in the admins' `authorized_keys`);
-  - if OpenSSH was **already installed**, its configuration and keys are left
-    untouched — the tool only adds the Tailscale firewall scope, so agree
-    credentials with whoever runs the box;
-  - a `RestartNeeded` message means a reboot is required before SSH works.
+  dropped, so SSH works only from the tailnet. Afterwards it **self-tests a key
+  login** and prints an **SSH setup summary** with the exact connect command
+  (`ssh <windows-username>@<tailnet-ip>` and `ssh <windows-username>@<hostname>`).
+  Notes:
+  - the tool resolves the target account automatically: if the current user is
+    an administrator it uses them, otherwise the first enabled local
+    (non-Microsoft) admin account found;
+  - if that account has no password, the tool sets one — OpenSSH refuses key
+    logins for empty-password accounts. It uses the value from
+    `--ssh-password` / `.sshpassword` if provided, otherwise generates a strong
+    random password per machine. The password is printed to the console and
+    saved in `TailscaleMe.log`; it is only needed for console/RDP login, not
+    SSH. An existing password is never overwritten;
+  - on **fresh** OpenSSH installs the tool also sets `PasswordAuthentication
+    no` in `sshd_config` (key-only SSH). Pass `--ssh-password-auth keep` to
+    leave password authentication enabled instead. Existing installs are never
+    changed;
+  - if OpenSSH was **already installed**, its configuration is untouched — the
+    tool re-checks/repairs the admin key and adds the firewall scope;
+  - a `RestartNeeded` message means a reboot is required before SSH works;
+  - if the SSH step ever fails, **re-running the tool repairs it**.
+
+### Verify SSH in 30 seconds
+
+Once the first machine is deployed, confirm the whole path from your machine:
+
+1. `tailscale ping <hostname>` — the node must respond (ACL reachability).
+2. `ssh you@<hostname>` (Linux/macOS node) or `ssh <user>@<hostname>`
+   (Windows node).
+3. Expected outcomes:
+   - connection **refused/closed** on Linux/macOS → your ACL lacks the `ssh`
+     rule — paste the `ssh` block from `ACL_Configuration.json`;
+   - connection **refused/closed** on Windows → your ACL lacks the `grants`
+     rule, or the account has no password (the tool sets one automatically,
+     but a reboot may be pending);
+   - **"no such host"** → MagicDNS isn't enabled on your side — use the
+     `ssh user@<tailnet-ip>` form instead;
+   - any other refusal → re-run the tool on the node (it repairs the SSH step)
+     and check the `TailscaleMe.log` summary block.
 
 To skip the Windows SSH step, build without `.sshkey`. To disable Tailscale SSH
 on Linux/macOS as well, build with `-ldflags "-X main.adSSH=false"`. The Windows

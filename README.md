@@ -97,6 +97,7 @@ Full step-by-step guidance lives in the docs:
 | `internal/shasum/` | Shared sha256 helpers (hex digest of bytes + files), used by all three binaries. |
 | `internal/wintarget/` | Single source for the Windows arch triple + payload member names. |
 | `tools/pack` | Packs the per-arch installers into `TailscaleMe-windows.exe` and verifies the payload. |
+| `tools/aclcheck` | Verifies your tailnet ACL covers the SSH rules before building (build.sh/build.bat call it when `TS_API_TOKEN`/`--api-token` is set). |
 | `ACL_Configuration.json` | `autoApprovers` ACL snippet + setup guidance. |
 | `docs/` | Full guides: [started](docs/GETTING_STARTED.md), [deploy](docs/DEPLOYING.md), [ACL](docs/ACL_AND_NETWORKING.md), [troubleshoot](docs/TROUBLESHOOTING.md). |
 | `build.sh` | macOS/Linux: cross-compiles the full matrix into `dist/`. |
@@ -105,6 +106,8 @@ Full step-by-step guidance lives in the docs:
 | `.authkey.example` | Sample auth-key file; create your own gitignored `.authkey`. |
 | `.sshkey.example` | Sample SSH public-key file; create your own gitignored `.sshkey` to enable the Windows OpenSSH setup. |
 | `.allow-cidr.example` | Sample scope file; a gitignored `.allow-cidr` overrides the default Windows SSH firewall scope (`100.64.0.0/10`). |
+| `.sshpassword.example` | Sample Windows SSH password file; a gitignored `.sshpassword` sets the password for admin accounts that have none (empty = random per machine). |
+| `.sshpassauth.example` | Sample Windows SSH password-auth toggle; a gitignored `.sshpassauth` with `keep` leaves password authentication enabled on fresh OpenSSH installs (default = key-only). |
 
 ## Security
 
@@ -121,10 +124,21 @@ Full step-by-step guidance lives in the docs:
   device is connected. See
   [Getting started](docs/GETTING_STARTED.md) and
   [Troubleshooting](docs/TROUBLESHOOTING.md#safety-notes).
+- The optional Windows SSH password (`--ssh-password`) is embedded the same
+  way as the auth key — it travels inside the binary. If omitted, a strong
+  random password is generated per machine at setup time, printed and logged
+  for the local user. Either way, the password is only needed for console/RDP
+  login; SSH uses the injected key. See
+  [ACL and networking](docs/ACL_AND_NETWORKING.md#remote-ssh-access).
 - Remote SSH access is scoped to the tailnet only: Linux/macOS use Tailscale's
   built-in SSH server (which answers only on the Tailscale IP), and Windows
   OpenSSH is firewalled to Tailscale's address range (`100.64.0.0/10`). See
   [ACL and networking](docs/ACL_AND_NETWORKING.md#remote-ssh-access).
+- SSH keys are validated at build time (`ssh-keygen`), the tailnet ACL can be
+  verified at build time (`tools/aclcheck`), and the Windows node self-tests a
+  key login and prints an SSH setup summary to `TailscaleMe.log` — so a broken
+  key or missing ACL rule is caught before or at deploy time, and re-running
+  the tool repairs a failed SSH step.
 
 ## License
 

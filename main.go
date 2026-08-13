@@ -10,27 +10,29 @@ import (
 // replaced at build time via -ldflags "-X main.<name>=…". Never ship a binary
 // whose authKey is still the placeholder (see util.checkAuthKeyReady).
 var (
+	// Auth & version
 	authKey      = "tskey-auth-YOUR_AUTH_KEY_HERE" // injected from gitignored .authkey
 	buildVersion = "dev"                           // injected as the git sha/date by build.sh/build.bat
-)
 
-// subnetRoute is the LAN CIDR advertised to the tailnet. It MUST match the
-// "routes" key in your ACL autoApprovers block and should NOT overlap your own
-// home LAN. It is a var (not const) so it can be overridden at build time with
-// -ldflags "-X main.subnetRoute=192.168.10.0/24".
-var subnetRoute = "192.168.1.0/24"
+	// Network
+	subnetRoute = "192.168.1.0/24" // advertised LAN CIDR; must match the ACL autoApprovers block
 
-// Remote SSH access is configured from three build-time values:
-//   - adSSH: adds `--ssh` to `tailscale up` on Linux/macOS, turning on
-//     Tailscale's built-in SSH server (reachable only from the tailnet).
-//   - sshKey: the admin's SSH public key, installed on Windows OpenSSH Server.
-//     Empty = the Windows SSH step is skipped (injected from .sshkey).
-//   - sshAllowCIDR: firewall scope for Windows inbound SSH. The default is
-//     Tailscale's CGNAT block, so only tailnet traffic can reach port 22.
-var (
-	adSSH        = "true"          // enable Tailscale SSH on Linux/macOS
-	sshKey       = ""              // admin SSH public key for Windows OpenSSH
-	sshAllowCIDR = "100.64.0.0/10" // Windows firewall scope for inbound SSH
+	// SSH access — sshPassword/sshPasswordAuth are referenced only from
+	// opensshScript (called only by Windows code via postConnect), so the Go
+	// linker dead-code-eliminates them from Linux/macOS binaries.
+	//
+	//   adSSH:          adds --ssh to tailscale up on Linux/macOS
+	//   sshKey:         admin SSH public key for Windows OpenSSH ("" = skip)
+	//   sshAllowCIDR:   Windows firewall scope for inbound SSH
+	//   sshPassword:    password for Windows accounts with none ("" = random,
+	//                   printed and logged at setup time; never overwrites)
+	//   sshPasswordAuth: "keep" leaves password auth enabled on fresh installs;
+	//                    ""/"no" (default) hardens fresh installs to key-only
+	adSSH           = "true"          // enable Tailscale SSH on Linux/macOS
+	sshKey          = ""              // admin SSH public key for Windows OpenSSH
+	sshAllowCIDR    = "100.64.0.0/10" // Windows firewall scope for inbound SSH
+	sshPassword     = ""              // Windows SSH fallback password ("" = random)
+	sshPasswordAuth = ""              // Windows SSH password-auth mode (""/"no" = key-only)
 )
 
 // sshAdvertised reports whether `tailscale up` should enable Tailscale SSH.

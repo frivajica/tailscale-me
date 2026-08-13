@@ -10,6 +10,8 @@
 .authkey
 .sshkey
 .allow-cidr
+.sshpassword
+.sshpassauth
 
 # Logs
 *.log

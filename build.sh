@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 #   --auth-key <key>      -> $AUTHKEY   -> .authkey    -> placeholder (non-auth)
 #   --ssh-key <pubkey>    -> $SSHKEY    -> .sshkey     -> "" (Windows SSH off)
 #   --allow-cidr <cidr>   -> $ALLOWCIDR -> .allow-cidr -> 100.64.0.0/10
+#   --ssh-password <pw>   -> $SSHPASSWORD -> .sshpassword -> "" (random per machine)
+#   --ssh-password-auth <no|keep> -> $SSHPASSAUTH -> .sshpassauth -> "" (key-only)
 #
 # Values passed as args/env can appear in the shell history or process list,
 # so prefer the gitignored files for repeatable builds.
@@ -19,6 +21,13 @@ Options:
   --auth-key <key>     Tailscale auth key (env AUTHKEY, file .authkey)
   --ssh-key <pubkey>   admin SSH public key for Windows OpenSSH (env SSHKEY, file .sshkey)
   --allow-cidr <cidr>  Windows SSH firewall scope (env ALLOWCIDR, file .allow-cidr)
+  --ssh-password <pw>  optional Windows password to set when an admin account has none (env SSHPASSWORD, file .sshpassword; empty = random per machine)
+  --ssh-password-auth <no|keep>
+                       Windows SSH password auth: ""/no (default) = key-only on fresh installs; keep = leave password auth enabled (env SSHPASSAUTH, file .sshpassauth)
+  --api-token <token>  Tailscale API token to verify the ACL covers SSH (env TS_API_TOKEN)
+  --tailnet <name>     tailnet for the ACL check (default: the token's tailnet)
+  --tag <tag:managed>  managed tag the ACL check requires (env TS_TAG)
+  --strict-acl         fail the build when an ACL rule is missing
   --help               show this help and exit
 
 Each value is taken from the first source that provides one: command line,
@@ -27,7 +36,8 @@ default compiled into main.go.
 EOF
 }
 
-AUTHKEY_ARG="" SSHKEY_ARG="" ALLOWCIDR_ARG=""
+AUTHKEY_ARG="" SSHKEY_ARG="" ALLOWCIDR_ARG="" SSHPASS_ARG="" SSHPASSAUTH_ARG=""
+APITOKEN_ARG="" TAILNET_ARG="" TAG_ARG="" STRICT_ACL_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --auth-key)
@@ -39,6 +49,22 @@ while [ $# -gt 0 ]; do
     --allow-cidr)
       [ $# -ge 2 ] || { echo "ERROR: --allow-cidr needs a value" >&2; exit 1; }
       ALLOWCIDR_ARG="$2"; shift 2 ;;
+    --ssh-password)
+      [ $# -ge 2 ] || { echo "ERROR: --ssh-password needs a value" >&2; exit 1; }
+      SSHPASS_ARG="$2"; shift 2 ;;
+    --ssh-password-auth)
+      [ $# -ge 2 ] || { echo "ERROR: --ssh-password-auth needs a value" >&2; exit 1; }
+      SSHPASSAUTH_ARG="$2"; shift 2 ;;
+    --api-token)
+      [ $# -ge 2 ] || { echo "ERROR: --api-token needs a value" >&2; exit 1; }
+      APITOKEN_ARG="$2"; shift 2 ;;
+    --tailnet)
+      [ $# -ge 2 ] || { echo "ERROR: --tailnet needs a value" >&2; exit 1; }
+      TAILNET_ARG="$2"; shift 2 ;;
+    --tag)
+      [ $# -ge 2 ] || { echo "ERROR: --tag needs a value" >&2; exit 1; }
+      TAG_ARG="$2"; shift 2 ;;
+    --strict-acl) STRICT_ACL_ARG=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "ERROR: unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -81,6 +107,31 @@ if [ -n "$SKEY" ]; then
   # Public keys contain spaces; the single quotes survive the go ldflags
   # tokenizer so the whole key lands in main.sshKey.
   LDEXTRA="$LDEXTRA -X 'main.sshKey=$SKEY'"
+
+  # Foolproof the key before shipping: a private key or mangled paste would
+  # silently produce an authorized_keys that refuses every login.
+  case "$SKEY" in
+    ssh-ed25519*|ssh-rsa*|ecdsa-sha2-*|ssh-dss*|sk-ssh-ed25519*|sk-ecdsa-sha2-*)
+      ;;
+    *)
+      echo "ERROR: --ssh-key / \$SSHKEY / .sshkey is not a valid OpenSSH public key (expected it to start with e.g. 'ssh-ed25519 ')." >&2
+      exit 1
+      ;;
+  esac
+  if command -v ssh-keygen >/dev/null 2>&1; then
+    tmp=$(mktemp)
+    printf '%s\n' "$SKEY" > "$tmp"
+    if ssh-keygen -l -f "$tmp" -E sha256 >/dev/null 2>&1; then
+      rm -f "$tmp"
+    else
+      rm -f "$tmp"
+      echo "ERROR: --ssh-key / \$SSHKEY / .sshkey does not parse as a public key." >&2
+      echo "       Expected e.g.: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... you@host" >&2
+      exit 1
+    fi
+  else
+    echo "WARNING: ssh-keygen not found - skipping SSH key parse validation."
+  fi
 fi
 
 # Windows SSH firewall scope: the default 100.64.0.0/10 (Tailscale only) is
@@ -91,6 +142,50 @@ if [ -z "$CIDR" ] && [ -f .allow-cidr ]; then
 fi
 if [ -n "$CIDR" ]; then
   LDEXTRA="$LDEXTRA -X main.sshAllowCIDR=$CIDR"
+fi
+
+# Optional Windows SSH account password: used on Windows only when an admin
+# account has NO password (OpenSSH refuses empty-password accounts even for key
+# logins). Left empty, a strong random one is generated per machine at setup.
+# Single quotes would break the ldflags tokenizer, so they are rejected here.
+PW="${SSHPASS_ARG:-${SSHPASSWORD:-}}"
+if [ -z "$PW" ] && [ -f .sshpassword ]; then
+  PW=$(tr -d '\r\n' < .sshpassword)
+fi
+if [ -n "$PW" ]; then
+  case "$PW" in
+    *"'"*|*'"'*|*'!'*) echo "ERROR: --ssh-password / \$SSHPASSWORD / .sshpassword must not contain ' \" or ! (breaks the build)." >&2; exit 1 ;;
+  esac
+  LDEXTRA="$LDEXTRA -X 'main.sshPassword=$PW'"
+fi
+
+# Windows SSH password authentication: ""/no (default) = fresh OpenSSH installs
+# are hardened to key-only; keep = password auth stays enabled. Existing OpenSSH
+# installs are never touched either way.
+PWAuth="${SSHPASSAUTH_ARG:-${SSHPASSAUTH:-}}"
+if [ -z "$PWAuth" ] && [ -f .sshpassauth ]; then
+  PWAuth=$(tr -d '\r\n' < .sshpassauth)
+fi
+if [ -n "$PWAuth" ]; then
+  case "$PWAuth" in
+    no|keep) ;;
+    *) echo "ERROR: --ssh-password-auth / \$SSHPASSAUTH / .sshpassauth must be \"no\" or \"keep\" (got \"$PWAuth\")." >&2; exit 1 ;;
+  esac
+  LDEXTRA="$LDEXTRA -X main.sshPasswordAuth=$PWAuth"
+fi
+
+# Optional preflight: verify the tailnet ACL covers the SSH rules. Only runs
+# when an API token is provided (--api-token / $TS_API_TOKEN); --strict-acl
+# turns a missing rule into a hard build failure (set -e aborts the script).
+APITOKEN="${APITOKEN_ARG:-${TS_API_TOKEN:-}}"
+if [ -n "$APITOKEN" ]; then
+  TAILNET_ARG="${TAILNET_ARG:-${TS_TAILNET:-}}"
+  TAG="${TAG_ARG:-${TS_TAG:-tag:managed}}"
+  echo "==> Verifying your tailnet ACL covers the SSH rules (tools/aclcheck) ..."
+  ACLARGS=(--token "$APITOKEN" --tag "$TAG")
+  [ -n "$TAILNET_ARG" ] && ACLARGS+=(--tailnet "$TAILNET_ARG")
+  [ -n "$STRICT_ACL_ARG" ] && ACLARGS+=(--strict)
+  go run ./tools/aclcheck "${ACLARGS[@]}"
 fi
 
 # Stamp the build version into the binaries for diagnostics (git short sha, or

@@ -5,6 +5,11 @@ The tool prints the path of its session log at startup
 screenshot of the window, or the log file — the log records every step and any
 error for diagnosis.
 
+**Rescue:** every step is idempotent. If anything fails partway (install, SSH
+key, firewall), fix the reported cause and **re-run the same binary** — it
+detects what's already done, resumes from the failing step, and repairs it
+(e.g. the Windows SSH admin key is re-installed if missing).
+
 ## Common issues
 
 - **Windows "msiexec failed with code 16xx"** → a previous install or pending
@@ -25,9 +30,31 @@ error for diagnosis.
   skipped by design (no OpenSSH Server).
 - **Windows "a restart is required before SSH works"** → reboot the machine;
   OpenSSH Server then starts automatically.
-- **Can't SSH into Windows** → the account needs a **password** and
-  **Administrators** membership (the key is installed for admin-group users);
-  connect using the tailnet hostname, e.g. `ssh alice@hostname`.
+- **Can't SSH into Windows** → the tool resolves the target account
+  automatically (current user if admin, else the first enabled local admin).
+  If that account had no password, the tool set one and printed it — use the
+  **key** to log in (the password is only for console/RDP). If the account is
+  a Microsoft-linked account, its password is managed online and is not
+  changed by the tool.
+- **Windows SSH setup self-test FAILED** → the node runs a loopback key login
+  test and prints the reason — most often a `RestartNeeded` pending reboot.
+  Fix and **re-run the tool** — it resumes from the SSH step and repairs the
+  admin key.
+- **Windows "ssh-keygen found" but the build failed with "not a valid OpenSSH
+  public key"** → your `.sshkey`/`--ssh-key` is missing header text, is a
+  private key, or got mangled by the shell. Use `ssh-keygen -t ed25519` to make
+  a fresh public key and rebuild.
+- **"aclcheck: WARNING" during the build** → your customized tailnet ACL lacks
+  the `ssh` and/or `grants` rule. Paste them from `ACL_Configuration.json`, or
+  pass `--strict-acl` to make the build fail so you can't forget. See
+  [Getting started — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional).
+- **Linux/macOS "Tailscale SSH is NOT running"** → the node says the SSH server
+  isn't active, so the error is server-side. Common causes: the ACL `ssh` rule
+  is missing, or port 22 was taken (the tool then connects without `--ssh`).
+  Check the `ssh` block in your ACL and the tool's log line about port 22.
+- **Linux/macOS ssh says "connection refused/closed"** → your ACL `ssh` rule is
+  missing or doesn't cover you — paste the `ssh` block from
+  `ACL_Configuration.json` (see [ACL and networking](ACL_AND_NETWORKING.md#verify-ssh-in-30-seconds)).
 - **LAN/local SSH no longer works on Windows** → by design: the firewall only
   admits Tailscale addresses for port 22. To widen the scope, rebuild with a
   gitignored `.allow-cidr` file (see [Getting started](GETTING_STARTED.md)).
@@ -58,3 +85,9 @@ error for diagnosis.
   deployment. The auth key is embedded in the binary, so anyone holding it can
   join your tailnet — use a reusable key with a short expiry, and revoke it
   after the device is connected (see [Deploying](DEPLOYING.md#what-you-should-do-afterwards)).
+- The optional Windows SSH password (`--ssh-password`) is embedded the same
+  way as the auth key — it travels inside the binary. If you supply a fixed
+  password, every build targets that same password; omit it for a unique
+  random password per machine. In either case the password is printed and
+  logged at setup time, and is only needed for console/RDP login (SSH uses
+  the injected key).

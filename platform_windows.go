@@ -167,6 +167,20 @@ func serviceRunning() bool {
 	return strings.Contains(string(out), "RUNNING")
 }
 
+// writeTempFile creates a 0600 file in the private temp dir and returns its
+// path plus a cleanup function that removes it. Used for secrets (SSH key,
+// password) so the value never appears on the process command line.
+func writeTempFile(name, content string) (string, func(), error) {
+	path, err := artifactPath(name)
+	if err != nil {
+		return "", func() {}, err
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		return "", func() {}, err
+	}
+	return path, func() { os.Remove(path) }, nil
+}
+
 // upArgs controls persistence across logouts/reboots on Windows.
 func upArgs() []string { return []string{"up", "--unattended"} }
 
@@ -179,19 +193,27 @@ func postConnect(cli string) {
 		return
 	}
 	step("Setting up SSH access restricted to the Tailscale network ...")
-	keyPath, err := artifactPath("authorized_key")
+
+	keyPath, keyCleanup, err := writeTempFile("authorized_key", strings.TrimSpace(sshKey)+"\n")
 	if err != nil {
 		step("WARNING: could not prepare the SSH key (%v); skipping SSH setup.", err)
 		return
 	}
-	if err := os.WriteFile(keyPath, []byte(strings.TrimSpace(sshKey)+"\n"), 0600); err != nil {
-		step("WARNING: could not write the SSH key (%v); skipping SSH setup.", err)
-		return
+	defer keyCleanup()
+
+	var passPath string
+	var passCleanup func()
+	if sshPassword != "" {
+		passPath, passCleanup, err = writeTempFile("ssh_password", sshPassword+"\n")
+		if err != nil {
+			step("WARNING: could not prepare the SSH password file (%v); skipping SSH setup.", err)
+			return
+		}
+		defer passCleanup()
 	}
-	defer os.Remove(keyPath)
 
 	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive",
-		"-ExecutionPolicy", "Bypass", "-Command", opensshScript(keyPath)).CombinedOutput()
+		"-ExecutionPolicy", "Bypass", "-Command", opensshScript(keyPath, passPath)).CombinedOutput()
 	if text := strings.TrimSpace(string(out)); text != "" {
 		step(text)
 	}

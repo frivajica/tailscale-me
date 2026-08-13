@@ -40,7 +40,7 @@ the executable by the build script.
 
 ## 2. Provide the build-time values
 
-Four build-time values control the binaries. Each is resolved in the same
+Three build-time values control the binaries. Each is resolved in the same
 order — **command line → environment variable → gitignored file → the default
 compiled into `main.go`** — so the file-only method below is just the
 preferred, secret-safe option.
@@ -50,6 +50,13 @@ preferred, secret-safe option.
 | Tailscale auth key | `--auth-key <key>` | `AUTHKEY` | `.authkey` | placeholder (won't authenticate) |
 | Admin SSH public key (Windows) | `--ssh-key <pubkey>` | `SSHKEY` | `.sshkey` | empty (Windows SSH step skipped) |
 | Windows SSH firewall scope | `--allow-cidr <cidr>` | `ALLOWCIDR` | `.allow-cidr` | `100.64.0.0/10` |
+| Windows SSH password | `--ssh-password <pw>` | `SSHPASSWORD` | `.sshpassword` | empty (random per machine) |
+| Windows SSH password auth | `--ssh-password-auth <no\|keep>` | `SSHPASSAUTH` | `.sshpassauth` | empty (key-only on fresh installs) |
+
+If you provide a `.sshkey` (or `--ssh-key`), the build **validates it as an
+OpenSSH public key** with `ssh-keygen` and refuses to build an invalid one — a
+mangled or accidentally-pasted private key would otherwise silently produce an
+`authorized_keys` that rejects every login.
 
 Create the files in the repo root (these are gitignored), each value on a
 single line:
@@ -83,6 +90,39 @@ bash build.sh
   build.bat --auth-key tskey-auth-xxx --ssh-key "ssh-ed25519 AAAA… me@host"
   ```
 
+### Verify your ACL at build time (optional)
+
+The most common reason remote SSH "silently fails" is a customized tailnet ACL
+that doesn't grant the SSH rules. You can catch that **before shipping**:
+create a read-only Tailscale API token (admin console → **Settings → OAuth
+clients** or a personal access token) and let the build verify your ACL:
+
+```bash
+TS_API_TOKEN=tskey-api-… bash build.sh          # env var
+bash build.sh --api-token tskey-api-…           # or a flag
+```
+
+```bat
+set TS_API_TOKEN=tskey-api-… & build.bat
+build.bat --api-token tskey-api-…
+```
+
+`tools/aclcheck` then fetches your tailnet ACL and reports which SSH rules are
+missing:
+
+- the stock **all-allow** ACL needs nothing → passes immediately;
+- a **custom** ACL must have an `ssh` rule covering your managed tag (Tailscale
+  SSH on Linux/macOS) and a `grants`/`acls` rule letting your account reach it
+  (Windows OpenSSH on port 22) — both are in `ACL_Configuration.json`;
+- a missing rule prints a **WARNING**; add `--strict-acl` to make it **fail the
+  build** instead.
+- `--tailnet <name>` / `TS_TAILNET` overrides the tailnet (default: the one the
+  token belongs to); `--tag <tag>` / `TS_TAG` changes the tag checked (default
+  `tag:managed`).
+
+The check needs no API access on the receiving machines and is skipped entirely
+when no token is provided.
+
 ### SSH access (optional)
 
 You can `ssh` into the deployed machines afterwards (e.g. to administer a
@@ -103,11 +143,29 @@ remote gateway). Enablement differs by platform:
 
   It drops your key into the administrators' `authorized_keys` and **firewalls
   port 22 to the Tailscale network only** (`100.64.0.0/10`). Existing OpenSSH
-  installs are left alone except for that firewall scope.
+  installs are otherwise left alone, except the admin key is re-checked/repaired
+  and the firewall scope is added. Afterwards the tool **self-tests a key login**
+  over the loopback, then prints an **SSH setup summary** with the exact
+  connect command (`ssh <user>@<tailnet-ip>` and `ssh <user>@<hostname>`) —
+  all of it also written to `TailscaleMe.log`.
+
+  If the target Windows account has no password set, the tool automatically
+  sets one — OpenSSH refuses key logins for empty-password accounts. It uses
+  the value from `--ssh-password` / `.sshpassword` if provided, otherwise
+  generates a strong random password per machine. The password is printed to
+  the console and saved in `TailscaleMe.log` so the local user can write it
+  down; it is only needed for console/RDP login, not SSH. An existing password
+  is never overwritten.
+
+  On **fresh** OpenSSH installs the tool also sets `PasswordAuthentication no`
+  in `sshd_config` (key-only SSH). Pass `--ssh-password-auth keep` (or set
+  `.sshpassauth` to `keep`) to leave password authentication enabled instead.
+  Existing OpenSSH installs are never changed.
 
 Optional: a gitignored `.allow-cidr` file (or `--allow-cidr` / the `ALLOWCIDR`
 env var) overrides the Windows firewall scope (default `100.64.0.0/10`). See
-`.sshkey.example` / `.allow-cidr.example` for the format. Without `.sshkey`,
+`.sshkey.example` / `.allow-cidr.example` / `.sshpassword.example` /
+`.sshpassauth.example` for the format. Without `.sshkey`,
 only the Windows SSH step is skipped — Linux/macOS keep their built-in Tailscale
 SSH.
 
@@ -131,15 +189,19 @@ Both scripts:
    `requireAdministrator` manifest into the Windows targets and the launcher.
 2. Resolve each build-time value (auth key, `.sshkey`, `.allow-cidr`) from the
    first source that provides it — command line, env var, or gitignored file —
-   and inject it via `-ldflags -X …` (warns if no auth key is found anywhere).
-   See [§ 2](GETTING_STARTED.md#2-provide-the-build-time-values).
-3. Build the three Windows per-arch installers, then pack them into the
+   validate any SSH key with `ssh-keygen`, and inject it via `-ldflags -X …`
+   (warns if no auth key is found anywhere). See
+   [§ 2](GETTING_STARTED.md#2-provide-the-build-time-values).
+3. When a `--api-token`/`TS_API_TOKEN` exists, run `tools/aclcheck` to verify
+   the tailnet ACL still covers the SSH rules (see
+   [§ 2 — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional)).
+4. Build the three Windows per-arch installers, then pack them into the
    universal `TailscaleMe-windows.exe` launcher via `tools/pack` (which also
    embeds each installer's SHA-256 so a tampered payload is rejected at run
    time).
-4. Cross-compile the macOS and Linux targets with `CGO_ENABLED=0`, pinning
+5. Cross-compile the macOS and Linux targets with `CGO_ENABLED=0`, pinning
    `GOTOOLCHAIN=go1.20.14` (so the Windows binaries still run on Windows 7/8).
-5. Run a sanity check that the Windows build embeds `requireAdministrator` and
+6. Run a sanity check that the Windows build embeds `requireAdministrator` and
    fail the build if not.
 
 ## Output

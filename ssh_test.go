@@ -50,19 +50,35 @@ func TestWithoutFlag(t *testing.T) {
 
 func TestOpensshScript(t *testing.T) {
 	oldCIDR := sshAllowCIDR
-	defer func() { sshAllowCIDR = oldCIDR }()
+	oldAuth := sshPasswordAuth
+	defer func() { sshAllowCIDR = oldCIDR; sshPasswordAuth = oldAuth }()
 	sshAllowCIDR = "100.64.0.0/10"
+	sshPasswordAuth = ""
 
-	s := opensshScript(`C:\Temp\dir with spaces\authorized_key`)
+	s := opensshScript(`C:\Temp\dir with spaces\authorized_key`, `C:\Temp\dir with spaces\ssh_password`)
 
 	for _, want := range []string{
 		"$keyPath = 'C:\\Temp\\dir with spaces\\authorized_key'",
+		"$passPath = 'C:\\Temp\\dir with spaces\\ssh_password'",
+		"$authMode = ''",
 		"$v4Cidr = '100.64.0.0/10'",
 		"$v6Cidr = '" + tailscaleIPv6Range + "'",
 		"Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0",
 		"administrators_authorized_keys",
 		"OpenSSH-Server-In-TCP (Tailscale v4)",
 		"OpenSSH-Server-In-TCP (Tailscale v6)",
+		"re-running this tool repairs it",
+		"Self-testing key login",
+		"SSH_SELFTEST_OK",
+		"Get-LocalUser",
+		"PasswordRequired",
+		"RNGCryptoServiceProvider",
+		"net user $sshUser",
+		"PasswordAuthentication no",
+		"Restart-Service sshd",
+		"the operator never needs a Windows password",
+		"----- SSH SETUP SUMMARY -----",
+		"tailscale",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("opensshScript missing %q", want)
@@ -72,6 +88,31 @@ func TestOpensshScript(t *testing.T) {
 	// The public key is read from the temp file - it must never be embedded.
 	if strings.Contains(s, "ssh-ed25519") {
 		t.Error("opensshScript must not contain key material")
+	}
+
+	// The script reads the password from the temp file, never from the Go var.
+	// Even when sshPassword is set, the generated PowerShell must not contain
+	// the literal value — only the $passPath reference.
+	oldPass := sshPassword
+	sshPassword = "hunter2"
+	defer func() { sshPassword = oldPass }()
+	s2 := opensshScript(`C:\k`, `C:\p`)
+	if strings.Contains(s2, "hunter2") {
+		t.Error("opensshScript must not embed the password value")
+	}
+}
+
+func TestOpensshScriptKeepPasswordAuth(t *testing.T) {
+	oldAuth := sshPasswordAuth
+	defer func() { sshPasswordAuth = oldAuth }()
+	sshPasswordAuth = "keep"
+
+	s := opensshScript(`C:\k`, `C:\p`)
+	if !strings.Contains(s, "$authMode = 'keep'") {
+		t.Errorf("keep mode missing auth mode marker")
+	}
+	if !strings.Contains(s, "Leaving password authentication enabled") {
+		t.Error("keep mode must announce leaving password auth enabled")
 	}
 }
 

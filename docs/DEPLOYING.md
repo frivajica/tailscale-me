@@ -91,7 +91,8 @@ whenever it is powered on.
    [ACL and networking](ACL_AND_NETWORKING.md).
 4. **Remote SSH is ready on the machines** — log in over the tailnet with
    `ssh user@<hostname>`. Linux/macOS use Tailscale SSH (on by default);
-   Windows uses OpenSSH Server, enabled when you built with `.sshkey`, and
-   needs the recipient's account to have a password and admin rights.
+   Windows uses OpenSSH Server, enabled when you built with `.sshkey`. If the
+   Windows account had no password, the tool set one automatically and printed
+   it to the console and log (needed only for console/RDP login, not SSH).
    Everything is already firewall-scoped to the tailnet. See
    [Remote SSH access](ACL_AND_NETWORKING.md#remote-ssh-access).

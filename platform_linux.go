@@ -209,4 +209,8 @@ func upArgs() []string {
 	return args
 }
 
-func postConnect(cli string) {}
+func postConnect(cli string) {
+	// Verify Tailscale SSH actually started (when --ssh was requested) and
+	// point at the ACL `ssh` rule if it did not.
+	reportSSHStatus(cli)
+}
