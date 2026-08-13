@@ -40,7 +40,7 @@ the executable by the build script.
 
 ## 2. Provide the build-time values
 
-Three build-time values control the binaries. Each is resolved in the same
+Five build-time values control the binaries. Each is resolved in the same
 order — **command line → environment variable → gitignored file → the default
 compiled into `main.go`** — so the file-only method below is just the
 preferred, secret-safe option.
@@ -64,6 +64,9 @@ single line:
 ```
 tskey-auth-xxxxxxxxxxxxxxxx      # .authkey
 ssh-ed25519 AAAA…your-public-key… you@example.com   # .sshkey
+100.64.0.0/10                    # .allow-cidr (optional, overrides default)
+My.Strong.Password.2026          # .sshpassword (optional, Windows only)
+keep                             # .sshpassauth (optional, Windows only)
 ```
 
 Then build:
@@ -128,46 +131,52 @@ when no token is provided.
 You can `ssh` into the deployed machines afterwards (e.g. to administer a
 remote gateway). Enablement differs by platform:
 
-- **Linux / macOS** — Tailscale's built-in SSH server (`tailscale up --ssh`)
-  is enabled by **default**. It is reachable **only over the tailnet** (it
-  answers just on the machine's Tailscale IP) and gated by an ACL `ssh` rule —
-  see [ACL and networking](ACL_AND_NETWORKING.md#remote-ssh-access). No key
-  file is needed. To disable it, build with `-ldflags "-X main.adSSH=false"`.
-- **Windows** — OpenSSH Server is set up only when you provide your SSH
-  **public** key — typically in a gitignored `.sshkey` file in the repo root
-  (single line), or via `--ssh-key <pubkey>` / the `SSHKEY` env var:
+#### Linux / macOS
 
-  ```
-  ssh-ed25519 AAAA…your-public-key… you@example.com
-  ```
+Tailscale's built-in SSH server (`tailscale up --ssh`) is enabled by
+**default**. It is reachable **only over the tailnet** (it answers just on the
+machine's Tailscale IP) and gated by an ACL `ssh` rule — see
+[ACL and networking](ACL_AND_NETWORKING.md#remote-ssh-access). No key file is
+needed. To disable it, build with `-ldflags "-X main.adSSH=false"`.
 
-  It drops your key into the administrators' `authorized_keys` and **firewalls
-  port 22 to the Tailscale network only** (`100.64.0.0/10`). Existing OpenSSH
-  installs are otherwise left alone, except the admin key is re-checked/repaired
-  and the firewall scope is added. Afterwards the tool **self-tests a key login**
-  over the loopback, then prints an **SSH setup summary** with the exact
-  connect command (`ssh <user>@<tailnet-ip>` and `ssh <user>@<hostname>`) —
-  all of it also written to `TailscaleMe.log`.
+#### Windows
 
-  If the target Windows account has no password set, the tool automatically
-  sets one — OpenSSH refuses key logins for empty-password accounts. It uses
-  the value from `--ssh-password` / `.sshpassword` if provided, otherwise
-  generates a strong random password per machine. The password is printed to
-  the console and saved in `TailscaleMe.log` so the local user can write it
-  down; it is only needed for console/RDP login, not SSH. An existing password
-  is never overwritten.
+OpenSSH Server is set up only when you provide your SSH **public** key —
+typically in a gitignored `.sshkey` file in the repo root (single line), or
+via `--ssh-key <pubkey>` / the `SSHKEY` env var:
 
-  On **fresh** OpenSSH installs the tool also sets `PasswordAuthentication no`
-  in `sshd_config` (key-only SSH). Pass `--ssh-password-auth keep` (or set
-  `.sshpassauth` to `keep`) to leave password authentication enabled instead.
-  Existing OpenSSH installs are never changed.
+```
+ssh-ed25519 AAAA…your-public-key… you@example.com
+```
+
+The tool then:
+
+1. Installs OpenSSH Server (or re-checks the key if already present).
+2. Drops your key into the administrators' `authorized_keys`.
+3. **Firewalls port 22 to the Tailscale network only** (`100.64.0.0/10`).
+4. **Self-tests a key login** over the loopback.
+5. Prints an **SSH setup summary** with the exact connect command — all of it
+   also written to `TailscaleMe.log`.
+
+**Password handling:** if the target Windows account has no password, the tool
+automatically sets one — OpenSSH refuses key logins for empty-password
+accounts. It uses the value from `--ssh-password` / `.sshpassword` if
+provided, otherwise generates a strong random password per machine. The
+password is printed to the console and saved in `TailscaleMe.log` so the local
+user can write it down; it is only needed for console/RDP login, not SSH. An
+existing password is never overwritten.
+
+**Key-only hardening:** on **fresh** OpenSSH installs the tool sets
+`PasswordAuthentication no` in `sshd_config` (SSH accepts only keys). Pass
+`--ssh-password-auth keep` (or set `.sshpassauth` to `keep`) to leave
+password authentication enabled instead. Existing OpenSSH installs are never
+changed.
 
 Optional: a gitignored `.allow-cidr` file (or `--allow-cidr` / the `ALLOWCIDR`
 env var) overrides the Windows firewall scope (default `100.64.0.0/10`). See
 `.sshkey.example` / `.allow-cidr.example` / `.sshpassword.example` /
-`.sshpassauth.example` for the format. Without `.sshkey`,
-only the Windows SSH step is skipped — Linux/macOS keep their built-in Tailscale
-SSH.
+`.sshpassauth.example` for the format. Without `.sshkey`, only the Windows SSH
+step is skipped — Linux/macOS keep their built-in Tailscale SSH.
 
 ## 3. Build the binaries
 
@@ -187,10 +196,11 @@ Both scripts:
 
 1. Install `github.com/tc-hib/go-winres` and embed the
    `requireAdministrator` manifest into the Windows targets and the launcher.
-2. Resolve each build-time value (auth key, `.sshkey`, `.allow-cidr`) from the
-   first source that provides it — command line, env var, or gitignored file —
-   validate any SSH key with `ssh-keygen`, and inject it via `-ldflags -X …`
-   (warns if no auth key is found anywhere). See
+2. Resolve each build-time value (auth key, `.sshkey`, `.allow-cidr`,
+   `.sshpassword`, `.sshpassauth`) from the first source that provides it —
+   command line, env var, or gitignored file — validate any SSH key with
+   `ssh-keygen`, and inject it via `-ldflags -X …` (warns if no auth key is
+   found anywhere). See
    [§ 2](GETTING_STARTED.md#2-provide-the-build-time-values).
 3. When a `--api-token`/`TS_API_TOKEN` exists, run `tools/aclcheck` to verify
    the tailnet ACL still covers the SSH rules (see
