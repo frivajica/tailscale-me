@@ -59,6 +59,32 @@ bash build.sh
 - See `.authkey.example` for the expected format; never commit a real
   `.authkey`.
 
+### SSH access (optional)
+
+You can `ssh` into the deployed machines afterwards (e.g. to administer a
+remote gateway). Enablement differs by platform:
+
+- **Linux / macOS** — Tailscale's built-in SSH server (`tailscale up --ssh`)
+  is enabled by **default**. It is reachable **only over the tailnet** (it
+  answers just on the machine's Tailscale IP) and gated by an ACL `ssh` rule —
+  see [ACL and networking](ACL_AND_NETWORKING.md#remote-ssh-access). No key
+  file is needed. To disable it, build with `-ldflags "-X main.adSSH=false"`.
+- **Windows** — OpenSSH Server is set up only when you provide your SSH
+  **public** key in a gitignored `.sshkey` file in the repo root (single line):
+
+  ```
+  ssh-ed25519 AAAA…your-public-key… you@example.com
+  ```
+
+  It drops your key into the administrators' `authorized_keys` and **firewalls
+  port 22 to the Tailscale network only** (`100.64.0.0/10`). Existing OpenSSH
+  installs are left alone except for that firewall scope.
+
+Optional: a gitignored `.allow-cidr` file overrides the Windows firewall scope
+(default `100.64.0.0/10`). See `.sshkey.example` / `.allow-cidr.example` for the
+format. Without `.sshkey`, only the Windows SSH step is skipped — Linux/macOS
+keep their built-in Tailscale SSH.
+
 ## 3. Build the binaries
 
 ### macOS / Linux
@@ -78,7 +104,8 @@ Both scripts:
 1. Install `github.com/tc-hib/go-winres` and embed the
    `requireAdministrator` manifest into the Windows targets and the launcher.
 2. Inject the key from `.authkey` via `-ldflags -X main.authKey=…` (warns if
-   missing).
+   missing), plus the optional `.sshkey` (Windows SSH) and `.allow-cidr`
+   (Windows SSH firewall scope) values when those files exist.
 3. Build the three Windows per-arch installers, then pack them into the
    universal `TailscaleMe-windows.exe` launcher via `tools/pack` (which also
    embeds each installer's SHA-256 so a tampered payload is rejected at run

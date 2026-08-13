@@ -89,3 +89,9 @@ whenever it is powered on.
 3. On your own devices, enable route acceptance so the remote LAN is reachable:
    `tailscale up --accept-routes` (or enable *accept routes* in the GUI). See
    [ACL and networking](ACL_AND_NETWORKING.md).
+4. **Remote SSH is ready on the machines** — log in over the tailnet with
+   `ssh user@<hostname>`. Linux/macOS use Tailscale SSH (on by default);
+   Windows uses OpenSSH Server, enabled when you built with `.sshkey`, and
+   needs the recipient's account to have a password and admin rights.
+   Everything is already firewall-scoped to the tailnet. See
+   [Remote SSH access](ACL_AND_NETWORKING.md#remote-ssh-access).

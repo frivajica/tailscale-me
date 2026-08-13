@@ -225,7 +225,13 @@ func waitDaemon(cli string) {
 	step("Timed out waiting for tailscaled; attempting to continue anyway.")
 }
 
-func upArgs() []string { return []string{"up", "--accept-dns"} }
+func upArgs() []string {
+	args := []string{"up", "--accept-dns"}
+	if sshAdvertised() {
+		args = append(args, "--ssh")
+	}
+	return args
+}
 
 // postConnect points the primary network service at Tailscale's MagicDNS
 // resolver (100.100.100.100) so tailnet names resolve. Standalone tailscaled on

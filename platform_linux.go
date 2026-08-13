@@ -199,7 +199,14 @@ func waitDaemon(cli string) {
 }
 
 // upArgs on Linux keeps the node running as a service (no GUI), so the plain
-// `up` with an auth key is all that is needed.
-func upArgs() []string { return []string{"up"} }
+// `up` with an auth key is all that is needed. When Tailscale SSH is enabled at
+// build time, `--ssh` lets the admin log into the machine over the tailnet.
+func upArgs() []string {
+	args := []string{"up"}
+	if sshAdvertised() {
+		args = append(args, "--ssh")
+	}
+	return args
+}
 
 func postConnect(cli string) {}

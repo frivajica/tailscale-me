@@ -27,6 +27,33 @@ and add:
 Auto-approval means an advertised route becomes active without clicking
 **Approve** in the admin console.
 
+### Optional SSH rules
+
+If you customize the default all-allow ACL, add `grants` (lets you reach the
+managed nodes — required for Windows OpenSSH on port 22) and `ssh` (gates
+Tailscale SSH on Linux/macOS):
+
+```json
+"grants": [
+  {
+    "src": ["email@example.com"],
+    "dst": ["tag:managed"],
+    "ip": ["*"]
+  }
+],
+"ssh": [
+  {
+    "action": "accept",
+    "src": ["email@example.com"],
+    "dst": ["tag:managed"],
+    "users": ["root", "autogroup:nonroot"]
+  }
+]
+```
+
+Replace `email@example.com` with your own account. On the default (all-allow)
+tailnet, SSH already works without these.
+
 ## Enable route acceptance on your own devices
 
 For the remote LAN to be reachable from a device in your tailnet, that device
@@ -50,6 +77,35 @@ var subnetRoute = "192.168.1.0/24"
 ```
 
 and rebuild (see [Getting started](GETTING_STARTED.md#customizing-the-subnet)).
+
+## Remote SSH access
+
+SSH into the deployed machines is scoped to the tailnet only:
+
+- **Linux / macOS** — the node runs Tailscale's built-in **SSH server**
+  (`tailscale up --ssh`), enabled by **default**. It answers **only on the
+  machine's Tailscale IP**, so nothing on the LAN or internet can reach it —
+  the ACL `ssh` rule is the only gate. Log in with `ssh user@<hostname>`
+  (MagicDNS). If the machine already runs its own `sshd` on port 22, the tool
+  logs a warning and connects without `--ssh`; that existing server stays
+  reachable over the tailnet.
+- **Windows** — SSH is set up only when a `.sshkey` was embedded at build time.
+  The tool installs/uses **OpenSSH Server** and **scopes the Windows firewall
+  for port 22 to the Tailscale address range** (`100.64.0.0/10`, plus
+  Tailscale's IPv6 `fd7a:115c:a1e0::/48`). LAN and internet callers are
+  dropped, so SSH works only from the tailnet. Log in with
+  `ssh <windows-username>@<hostname>`. Notes:
+  - the Windows account must have a **password** and be in the **Administrators**
+    group (the key is installed in the admins' `authorized_keys`);
+  - if OpenSSH was **already installed**, its configuration and keys are left
+    untouched — the tool only adds the Tailscale firewall scope, so agree
+    credentials with whoever runs the box;
+  - a `RestartNeeded` message means a reboot is required before SSH works.
+
+To skip the Windows SSH step, build without `.sshkey`. To disable Tailscale SSH
+on Linux/macOS as well, build with `-ldflags "-X main.adSSH=false"`. The Windows
+firewall scope (and `.allow-cidr` override) only applies when the Windows SSH
+step runs.
 
 ## macOS headless mode
 

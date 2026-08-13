@@ -6,8 +6,10 @@
 *.syso
 /tmp/
 
-# Secrets — never commit a live auth key
+# Secrets — never commit a live auth key or SSH private key
 .authkey
+.sshkey
+.allow-cidr
 
 # Logs
 *.log

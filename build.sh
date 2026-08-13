@@ -28,6 +28,23 @@ if [ -z "$LDEXTRA" ]; then
   echo "WARNING: .authkey not found - building with placeholder key (will NOT authenticate)."
 fi
 
+# Optional SSH config, injected the same way. Both are gitignored; missing
+# files just mean the matching feature is compiled in its default state.
+if [ -f .sshkey ]; then
+  SSHKEY=$(tr -d '\r\n' < .sshkey)
+  if [ -n "$SSHKEY" ]; then
+    # Public keys contain spaces; the single quotes survive the go ldflags
+    # tokenizer so the whole key lands in main.sshKey.
+    LDEXTRA="$LDEXTRA -X 'main.sshKey=$SSHKEY'"
+  fi
+fi
+if [ -f .allow-cidr ]; then
+  CIDR=$(tr -d '\r\n' < .allow-cidr)
+  if [ -n "$CIDR" ]; then
+    LDEXTRA="$LDEXTRA -X main.sshAllowCIDR=$CIDR"
+  fi
+fi
+
 # Stamp the build version into the binaries for diagnostics (git short sha, or
 # the date outside a git checkout).
 VERSION=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M)

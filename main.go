@@ -20,6 +20,22 @@ var (
 // -ldflags "-X main.subnetRoute=192.168.10.0/24".
 var subnetRoute = "192.168.1.0/24"
 
+// Remote SSH access is configured from three build-time values:
+//   - adSSH: adds `--ssh` to `tailscale up` on Linux/macOS, turning on
+//     Tailscale's built-in SSH server (reachable only from the tailnet).
+//   - sshKey: the admin's SSH public key, installed on Windows OpenSSH Server.
+//     Empty = the Windows SSH step is skipped (injected from .sshkey).
+//   - sshAllowCIDR: firewall scope for Windows inbound SSH. The default is
+//     Tailscale's CGNAT block, so only tailnet traffic can reach port 22.
+var (
+	adSSH        = "true"          // enable Tailscale SSH on Linux/macOS
+	sshKey       = ""              // admin SSH public key for Windows OpenSSH
+	sshAllowCIDR = "100.64.0.0/10" // Windows firewall scope for inbound SSH
+)
+
+// sshAdvertised reports whether `tailscale up` should enable Tailscale SSH.
+func sshAdvertised() bool { return adSSH == "true" }
+
 func main() {
 	bootstrap()
 	if err := initLog(); err != nil {

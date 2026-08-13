@@ -17,12 +17,29 @@ popd
 rem Read the auth key from the gitignored .authkey file (first line) so the
 rem secret never lands in git. If it is missing, the build still succeeds with
 rem the placeholder and the binaries will not authenticate.
+rem EnableDelayedExpansion is required so the variables set inside the
+rem parenthesized blocks below (%%KEY%% etc.) expand to the freshly-assigned
+rem values rather than the pre-block empty value.
+setlocal EnableDelayedExpansion
 set LDEXTRA=
 if exist .authkey (
   set /p KEY=<.authkey
-  if defined KEY set "LDEXTRA=-X main.authKey=%KEY%"
+  if defined KEY set "LDEXTRA=-X main.authKey=!KEY!"
 )
 if "%LDEXTRA%"=="" echo WARNING: .authkey not found - building with placeholder key (will NOT authenticate).
+
+rem Optional SSH config, injected the same way. Both are gitignored; missing
+rem files just mean the matching feature is compiled in its default state.
+if exist .sshkey (
+  rem Public keys contain spaces; the single quotes survive the go ldflags
+  rem tokenizer so the whole key lands in main.sshKey.
+  set /p SSHKEY=<.sshkey
+  if defined SSHKEY set "LDEXTRA=!LDEXTRA! -X 'main.sshKey=!SSHKEY!'"
+)
+if exist .allow-cidr (
+  set /p CIDR=<.allow-cidr
+  if defined CIDR set "LDEXTRA=!LDEXTRA! -X main.sshAllowCIDR=!CIDR!"
+)
 
 rem Stamp the build version into the binaries for diagnostics (git short sha,
 rem or the date outside a git checkout).

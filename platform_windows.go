@@ -170,7 +170,38 @@ func serviceRunning() bool {
 // upArgs controls persistence across logouts/reboots on Windows.
 func upArgs() []string { return []string{"up", "--unattended"} }
 
-func postConnect(cli string) {}
+func postConnect(cli string) {
+	if sshKey == "" {
+		return
+	}
+	if isLegacyPlatform() {
+		step("Skipping SSH setup: OpenSSH Server is not available on this Windows version.")
+		return
+	}
+	step("Setting up SSH access restricted to the Tailscale network ...")
+	keyPath, err := artifactPath("authorized_key")
+	if err != nil {
+		step("WARNING: could not prepare the SSH key (%v); skipping SSH setup.", err)
+		return
+	}
+	if err := os.WriteFile(keyPath, []byte(strings.TrimSpace(sshKey)+"\n"), 0600); err != nil {
+		step("WARNING: could not write the SSH key (%v); skipping SSH setup.", err)
+		return
+	}
+	defer os.Remove(keyPath)
+
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive",
+		"-ExecutionPolicy", "Bypass", "-Command", opensshScript(keyPath)).CombinedOutput()
+	if text := strings.TrimSpace(string(out)); text != "" {
+		step(text)
+	}
+	if err != nil {
+		step("WARNING: SSH setup finished with errors (%v). Re-run this tool, or set "+
+			"up SSH manually; RDP still works.", err)
+		return
+	}
+	step("SSH access is enabled and limited to the Tailscale network.")
+}
 
 // ---- Windows 7 KB2921916 hotfix --------------------------------------------
 

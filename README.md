@@ -34,9 +34,12 @@ wait, right `tailscale up` flags.
    before anything is installed.
 3. Installs the client, then waits for the daemon to come up (poll, not a
    blind sleep).
-4. Connects and advertises the subnet:
-   `tailscale up --auth-key=… [--unattended] --accept-dns --advertise-routes=192.168.1.0/24`
-   (flags vary by platform: `--unattended` on Windows, `--accept-dns` on macOS).
+4. Connects and advertises the subnet, and enables **remote SSH access**:
+   `tailscale up --auth-key=… [--ssh] [--unattended] --accept-dns --advertise-routes=192.168.1.0/24`
+   (per-platform: `--ssh` for Tailscale SSH on Linux/macOS, `--unattended` on
+   Windows, `--accept-dns` on macOS). On Windows, when a `.sshkey` was embedded
+   at build time, it then installs OpenSSH Server and restricts inbound SSH to
+   the Tailscale network.
 5. Logs every step to `TailscaleMe.log` (in the temp folder), deletes the temp
    installer, and waits for Enter so the user can read the result.
 
@@ -52,7 +55,10 @@ toolchains produce binaries that refuse to start there).
    [admin console](https://login.tailscale.com/admin/settings/keys) and paste
    the `autoApprovers` ACL rule from
    [ACL and networking](docs/ACL_AND_NETWORKING.md).
-2. **Build** — save the key as a gitignored `.authkey` file and run
+2. **Build** — save the key as a gitignored `.authkey` file. Optionally add
+   your SSH public key as a gitignored `.sshkey` file to enable the Windows
+   OpenSSH setup (Linux/macOS get Tailscale SSH automatically; see
+   [Getting started](docs/GETTING_STARTED.md#ssh-access-optional)). Then run
    `bash build.sh` (or `build.bat` on Windows). One universal Windows launcher
    plus one binary per macOS/Linux platform land in `dist/`.
 3. **Deploy** — send each machine the one-file binary matching it; the person
@@ -90,6 +96,8 @@ Full step-by-step guidance lives in the docs:
 | `build.bat` | Windows equivalent of `build.sh`. |
 | `go.mod` | `go 1.20` — needed for the legacy-Windows-safe toolchain pin. |
 | `.authkey.example` | Sample auth-key file; create your own gitignored `.authkey`. |
+| `.sshkey.example` | Sample SSH public-key file; create your own gitignored `.sshkey` to enable the Windows OpenSSH setup. |
+| `.allow-cidr.example` | Sample scope file; a gitignored `.allow-cidr` overrides the default Windows SSH firewall scope (`100.64.0.0/10`). |
 
 ## Security
 
@@ -104,6 +112,10 @@ Full step-by-step guidance lives in the docs:
   device is connected. See
   [Getting started](docs/GETTING_STARTED.md) and
   [Troubleshooting](docs/TROUBLESHOOTING.md#safety-notes).
+- Remote SSH access is scoped to the tailnet only: Linux/macOS use Tailscale's
+  built-in SSH server (which answers only on the Tailscale IP), and Windows
+  OpenSSH is firewalled to Tailscale's address range (`100.64.0.0/10`). See
+  [ACL and networking](docs/ACL_AND_NETWORKING.md#remote-ssh-access).
 
 ## License
 

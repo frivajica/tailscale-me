@@ -1,15 +1,32 @@
 {
   "comment": "Tailscale ACL guidance for the TailscaleMe setup tool.",
-  "howToUse": "In the Tailscale admin console open the ACL / policy editor and add the autoApprovers block below. The 'routes' CIDRs must match the subnetRoute constant in main.go EXACTLY. The auth key embedded in the TailscaleMe binary must be generated with the tag:managed tag (or a tag of your choosing), otherwise auto-approval will not match this identity.",
+  "howToUse": "In the Tailscale admin console open the ACL / policy editor and add the autoApprovers block below. The 'routes' CIDRs must match the subnetRoute constant in main.go EXACTLY. The auth key embedded in the TailscaleMe binary must be generated with the tag:managed tag (or a tag of your choosing), otherwise auto-approval will not match this identity. The grants and ssh blocks below are optional hardening for when you customize the default all-allow ACL: grants gates who may reach the managed nodes (needed for Windows OpenSSH on port 22), and ssh gates Tailscale SSH on Linux/macOS. Replace email@example.com with your own email.",
   "autoApprovers": {
     "routes": {
       "192.168.1.0/24": ["tag:managed"]
     }
   },
+  "grants": [
+    {
+      "src": ["email@example.com"],
+      "dst": ["tag:managed"],
+      "ip": ["*"]
+    }
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["email@example.com"],
+      "dst": ["tag:managed"],
+      "users": ["root", "autogroup:nonroot"]
+    }
+  ],
   "notes": [
     "Auto-approval means advertised routes come up without clicking Approve in the admin console.",
     "On the accepting devices run: tailscale up --accept-routes   (or enable 'accept routes' in the GUI) so the remote LAN becomes reachable.",
     "Do not advertise a subnet that overlaps a local LAN - the route is ignored and may cause conflicts.",
-    "Keep the auth key single-use and short-lived; it is embedded in the executable."
+    "Keep the auth key single-use and short-lived; it is embedded in the executable.",
+    "Windows SSH is NOT covered by the ssh block: it uses the grants rule (port 22) plus a machine firewall scope that only admits Tailscale addresses.",
+    "The ssh block only applies to the Tailscale SSH server on Linux/macOS nodes."
   ]
 }
