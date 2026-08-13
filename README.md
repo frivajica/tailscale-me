@@ -39,22 +39,61 @@ launch. It is built with **Go 1.20** so the binary itself also runs on Win7/8
 | `build.sh` | macOS/Linux: installs go-winres, embeds manifest, cross-compiles. |
 | `build.bat` | Windows equivalent of `build.sh`. |
 | `go.mod` | `go 1.20` — needed for the legacy-Windows-safe toolchain pin. |
+| `.authkey.example` | Sample auth-key file; create your own gitignored `.authkey`. |
 
 ## Prerequisite: your auth key
 
-1. Generate a key at Tailscale admin console → **Settings → Keys → Generate
-   auth key**.
-2. **Tag it `tag:family-biz`** (required so the ACL `autoApprovers` rule
-   matches), **single-use**, short expiry, and allow it to *advertise routes*.
-3. Replace the placeholder in `main.go`:
+Follow the **step-by-step guide** below to generate a key, then store it in a
+gitignored `.authkey` file. The build scripts inject it into the exe at
+compile time, so **no secret ever lands in git**.
 
-   ```go
-   const authKey = "tskey-auth-YOUR_AUTH_KEY_HERE"
-   ```
+### Step-by-step: generate the key in the Tailscale console
 
-The key is baked into the exe — anyone holding the exe can join your tailnet,
-which is why single-use + short expiry matters. Embedding a still-valid,
-reusable key is a security hole.
+1. **Log in** to https://login.tailscale.com → **Settings → Keys** (left sidebar).
+2. Click **Generate auth key**.
+3. Configure it:
+   - **Reusable**: turn **ON** (covers the Windows 7 reboot re-run and any
+     retry; you revoke it later).
+   - **Expiration**: **7 days**.
+   - **Tags**: type `tag:family-biz`. If it's a brand-new tag, Tailscale asks to
+     add it to your tailnet's ACLs as a tag owner — accept. (This is the tag the
+     `autoApprovers` rule matches, so it must be exactly `family-biz`.)
+   - Leave everything else default. Click **Generate key**.
+4. **Copy the key** (it starts with `tskey-auth-…`). It is shown **only once** —
+   store it somewhere private.
+5. **Store it for the build** (see below), then `bash build.sh`.
+6. **Set the ACL first** so routes auto-approve when the machine joins — paste
+   the `autoApprovers` block from the [Configure ACLs](#configure-acls) section
+   into **Settings → Access controls**.
+7. After the family member runs the tool, check **Machines** — the PC appears
+   with the `family-biz` tag and an active `192.168.1.0/24` route (no manual
+   Approve click needed).
+8. **Revoke the key** once the node is confirmed connected: Settings → Keys →
+   **⋯ → Revoke**. Existing nodes stay online; only future joins are blocked.
+
+### Store the key for the build
+
+Create a file named `.authkey` (gitignored) in this directory containing the
+key on a single line:
+
+```
+tskey-auth-xxxxxxxxxxxxxxxx
+```
+
+Then build:
+
+```bash
+bash build.sh
+```
+
+- With `.authkey` present, the key is baked into `TailscaleMe.exe`.
+- Without it, the build warns and produces an exe with a placeholder that will
+  **not** authenticate — so the repo is always safe to clone/build.
+- See `.authkey.example` for the expected format; never commit a real `.authkey`.
+
+The key is baked into the exe — anyone holding the exe can join your tailnet.
+This is why the recommended flow is **reusable + 7-day expiry + revoke after
+setup** rather than a long-lived key left lying around.
 
 ## Customize the subnet
 
@@ -144,8 +183,8 @@ Give them these instructions (also shown on screen):
 5. Wait 1–2 minutes; the window should end with **"Tailscale is connected and
    advertising routes."** Then you can close it.
 
-Pre-flight before sending: set your real auth key in `main.go` and re-run
-`bash build.sh`. Never ship one whose key is a placeholder.
+Pre-flight before sending: create `.authkey` with a fresh key and re-run
+`bash build.sh`. Never ship one whose key is the placeholder.
 
 ## Troubleshooting
 
