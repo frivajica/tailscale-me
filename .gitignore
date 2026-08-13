@@ -1,0 +1,13 @@
+# Build artifacts — the exe embeds the auth key, never commit it
+/TailscaleMe.exe
+*.exe
+*.syso
+/tmp/
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
