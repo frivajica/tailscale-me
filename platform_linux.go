@@ -3,15 +3,12 @@
 package main
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -22,6 +19,8 @@ const (
 	sysdDir = "/etc/systemd/system"
 	sock    = "/run/tailscale/tailscaled.sock"
 )
+
+func bootstrap() {}
 
 func ensureElevated() error {
 	if os.Geteuid() == 0 {
@@ -34,24 +33,12 @@ func ensureElevated() error {
 func isLegacyPlatform() bool { return false }
 
 func platformDesc() string {
-	name := osReleaseName()
-	if name == "" {
-		name = "Linux"
-	}
-	return fmt.Sprintf("%s (%s)", name, runtime.GOARCH)
-}
-
-func osReleaseName() string {
-	b, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "PRETTY_NAME=") {
-			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+	if b, err := os.ReadFile("/etc/os-release"); err == nil {
+		if name := parseOSRelease(string(b)); name != "" {
+			return fmt.Sprintf("%s (%s)", name, runtime.GOARCH)
 		}
 	}
-	return ""
+	return fmt.Sprintf("Linux (%s)", runtime.GOARCH)
 }
 
 func preInstall(legacy bool) {}
@@ -66,60 +53,76 @@ func packageBase() (string, error) {
 
 func packageLocalName() string { return "tailscale.tgz" }
 
-// installPackage extracts the static tarball and registers tailscaled with
-// systemd so the node persists across reboots. The package's own unit files
-// expect tailscaled at /usr/sbin and an env file at /etc/default/tailscaled.
-func installPackage(path string) error {
+// installCLI fetches, verifies and extracts the static tarball, registers
+// tailscaled with systemd so the node persists across reboots, and returns the
+// CLI path. The package's own unit files expect tailscaled at /usr/sbin and an
+// env file at /etc/default/tailscaled.
+func installCLI(legacy bool) (string, error) {
+	if cli := findCLI(); cli != "" {
+		step("Tailscale is already installed at: %s (skipping install).", cli)
+		return cli, nil
+	}
 	if !hasSystemd() {
-		return fmt.Errorf("systemd was not detected on this machine. TailscaleMe " +
+		return "", fmt.Errorf("systemd was not detected on this machine. TailscaleMe " +
 			"auto-installs only on systemd systems. Manually extract the tarball " +
 			"and run: tailscaled --state=/var/lib/tailscale/tailscaled.state\n")
 	}
+	url, wantSHA, _, err := installerArtifact(legacy)
+	if err != nil {
+		return "", fmt.Errorf("installation package could not be prepared: %w", err)
+	}
+	step("Downloading installer %s ...", url)
+	step("Verifying installer integrity (SHA-256) ...")
+	dest, err := downloadVerified(url, wantSHA)
+	if err != nil {
+		return "", err
+	}
+	step("Installer verified.")
 
 	dir, err := os.MkdirTemp("", "tailscale-me-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.RemoveAll(dir)
 
 	step("Extracting Tailscale package ...")
-	if err := extractTgz(path, dir); err != nil {
-		return err
+	if err := extractTgz(dest, dir); err != nil {
+		return "", err
 	}
 	src, err := pkgRoot(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	step("Installing binaries ...")
 	if err := copyFile(filepath.Join(src, "tailscaled"), filepath.Join(sbindir, "tailscaled"), 0755); err != nil {
-		return err
+		return "", err
 	}
 	if err := copyFile(filepath.Join(src, "tailscale"), filepath.Join(bindir, "tailscale"), 0755); err != nil {
-		return err
+		return "", err
 	}
 
 	step("Writing /etc/default/tailscaled ...")
 	env := "PORT=\"41641\"\nFLAGS=\"\"\n"
 	if err := os.WriteFile(envFile, []byte(env), 0644); err != nil {
-		return err
+		return "", err
 	}
 
 	step("Installing systemd service units ...")
 	for _, u := range []string{"tailscaled.service", "tailscale-wait-online.service", "tailscale-online.target"} {
 		if err := copyFileIfExists(filepath.Join(src, "systemd", u), filepath.Join(sysdDir, u)); err != nil {
-			return err
+			return "", err
 		}
 	}
 
 	step("Enabling and starting the tailscaled service ...")
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl daemon-reload: %v %s", err, out)
+		return "", fmt.Errorf("systemctl daemon-reload: %w %s", err, out)
 	}
 	if out, err := exec.Command("systemctl", "enable", "--now", "tailscaled").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl enable --now tailscaled: %v %s", err, out)
+		return "", fmt.Errorf("systemctl enable --now tailscaled: %w %s", err, out)
 	}
-	return nil
+	return findCLI(), nil
 }
 
 func hasSystemd() bool {
@@ -128,55 +131,6 @@ func hasSystemd() bool {
 	}
 	_, err := exec.LookPath("systemctl")
 	return err == nil
-}
-
-// extractTgz unpacks a tarball into destDir with a path-traversal guard.
-func extractTgz(src, destDir string) error {
-	f, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	base := filepath.Clean(destDir)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		name := filepath.Join(base, hdr.Name)
-		if !strings.HasPrefix(filepath.Clean(name), base) {
-			return fmt.Errorf("archive entry escapes target directory: %s", hdr.Name)
-		}
-		if hdr.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(name, 0755); err != nil {
-				return err
-			}
-			continue
-		}
-		if hdr.Typeflag == tar.TypeReg {
-			if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
-				return err
-			}
-			out, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
-				return err
-			}
-			out.Close()
-		}
-	}
 }
 
 // pkgRoot locates the extracted top-level directory (the tarball wraps its
@@ -238,14 +192,15 @@ func startDaemon(cli string) {}
 // systemd unit exposes after the service reaches Running.
 func waitDaemon(cli string) {
 	step("Waiting for the tailscaled socket ...")
-	deadline := time.Now().Add(servicePollS)
-	for time.Now().Before(deadline) {
+	if pollUntil(func() bool {
 		if st, err := os.Stat(sock); err == nil && !st.IsDir() {
-			step("tailscaled is running.")
-			time.Sleep(2 * time.Second)
-			return
+			return true
 		}
-		time.Sleep(serviceTick)
+		return false
+	}, serviceTick, servicePollS) {
+		step("tailscaled is running.")
+		time.Sleep(2 * time.Second)
+		return
 	}
 	step("Timed out waiting for tailscaled; attempting to continue anyway.")
 }
@@ -253,3 +208,5 @@ func waitDaemon(cli string) {
 // upArgs on Linux keeps the node running as a service (no GUI), so the plain
 // `up` with an auth key is all that is needed.
 func upArgs() []string { return []string{"up"} }
+
+func postConnect(cli string) {}

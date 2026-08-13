@@ -8,9 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -22,6 +20,8 @@ const (
 	kb2921916SHA256 = "39d978285d01ee4c0dfe9e2462bc4c948260aaf041aaa04faef3275f6d46a773"
 )
 
+func bootstrap() {}
+
 func ensureElevated() error {
 	if exec.Command("net", "session").Run() == nil {
 		return nil
@@ -31,7 +31,7 @@ func ensureElevated() error {
 }
 
 func isLegacyPlatform() bool {
-	major, minor, err := windowsVersion()
+	major, minor, err := currentWindowsVersion()
 	if err != nil {
 		return false
 	}
@@ -39,40 +39,28 @@ func isLegacyPlatform() bool {
 }
 
 func platformDesc() string {
-	major, minor, err := windowsVersion()
+	major, minor, err := currentWindowsVersion()
 	if err != nil {
 		return "Windows"
 	}
 	return fmt.Sprintf("Windows %d.%d (%s)", major, minor, runtime.GOARCH)
 }
 
-// preInstall applies the KB2921916 hotfix on Windows 7, which is required for
-// the Go-built Tailscale client to run.
 func preInstall(legacy bool) {
 	if legacy {
-		major, minor, err := windowsVersion()
+		major, minor, err := currentWindowsVersion()
 		if err == nil && major == 6 && minor == 1 {
 			installKB2921916()
 		}
 	}
 }
 
-func windowsVersion() (major, minor int, err error) {
+func currentWindowsVersion() (major, minor int, err error) {
 	out, err := exec.Command("cmd", "/c", "ver").CombinedOutput()
 	if err != nil {
-		return 0, 0, fmt.Errorf("cmd /c ver failed: %v", err)
+		return 0, 0, fmt.Errorf("cmd /c ver failed: %w", err)
 	}
-	re := regexp.MustCompile(`(\d+)\.(\d+)\.\d+`)
-	m := re.FindStringSubmatch(string(out))
-	if len(m) != 3 {
-		return 0, 0, fmt.Errorf("could not parse version from %q", out)
-	}
-	major, err = strconv.Atoi(m[1])
-	if err != nil {
-		return 0, 0, err
-	}
-	minor, err = strconv.Atoi(m[2])
-	return major, minor, err
+	return parseWindowsVer(string(out))
 }
 
 func packageBase() (string, error) {
@@ -88,6 +76,31 @@ func packageBase() (string, error) {
 }
 
 func packageLocalName() string { return "tailscale-setup.msi" }
+
+// installCLI fetches and verifies the MSI, installs it silently, and returns
+// the CLI path. Skips straight to the CLI when Tailscale is already present.
+func installCLI(legacy bool) (string, error) {
+	if cli := findCLI(); cli != "" {
+		step("Tailscale is already installed at: %s (skipping install).", cli)
+		return cli, nil
+	}
+	url, wantSHA, _, err := installerArtifact(legacy)
+	if err != nil {
+		return "", fmt.Errorf("installation package could not be prepared: %w", err)
+	}
+	step("Downloading installer %s ...", url)
+	step("Verifying installer integrity (SHA-256) ...")
+	dest, err := downloadVerified(url, wantSHA)
+	if err != nil {
+		return "", err
+	}
+	step("Installer verified.")
+	if err := installPackage(dest); err != nil {
+		return "", err
+	}
+	step("Temporary installation files cleaned up.")
+	return findCLI(), nil
+}
 
 func installPackage(path string) error {
 	step("Installing Tailscale silently (msiexec /quiet) ...")
@@ -153,14 +166,12 @@ func startDaemon(cli string) {}
 // replacing a blind sleep with a deterministic readiness check.
 func waitDaemon(cli string) {
 	step("Waiting for the Tailscale service to start ...")
-	deadline := time.Now().Add(servicePollS)
-	for time.Now().Before(deadline) {
-		if serviceRunning() {
-			step("Tailscale service is running.")
-			time.Sleep(3 * time.Second) // let the daemon finish initialising
-			return
-		}
-		time.Sleep(serviceTick)
+	if pollUntil(func() bool {
+		return serviceRunning()
+	}, serviceTick, servicePollS) {
+		step("Tailscale service is running.")
+		time.Sleep(3 * time.Second) // let the daemon finish initialising
+		return
 	}
 	step("Timed out waiting for the Tailscale service; attempting to continue anyway.")
 	time.Sleep(5 * time.Second)
@@ -177,27 +188,23 @@ func serviceRunning() bool {
 // upArgs controls persistence across logouts/reboots on Windows.
 func upArgs() []string { return []string{"up", "--unattended"} }
 
+func postConnect(cli string) {}
+
 // ---- Windows 7 KB2921916 hotfix --------------------------------------------
 
 // installKB2921916 downloads, verifies and silently applies the hotfix. It
 // never forces a reboot: it warns first and only reboots after the user
 // accepts the prompt.
 func installKB2921916() {
-	path := filepath.Join(os.TempDir(), "Windows6.1-KB2921916-x64.msu")
 	step("Downloading required Windows 7 update KB2921916 ...")
-	if err := downloadFile(kb2921916URL, path); err != nil {
-		step("WARNING: could not download KB2921916: %v", err)
+	dest, err := downloadVerified(kb2921916URL, kb2921916SHA256)
+	if err != nil {
+		step("WARNING: could not download or verify KB2921916: %v", err)
 		step("If Tailscale fails to start afterwards, apply the update manually and reboot.")
 		return
 	}
-	got, err := sha256File(path)
-	if err != nil || !strings.EqualFold(got, kb2921916SHA256) {
-		step("WARNING: KB2921916 checksum mismatch (%s), discarding file.", got)
-		os.Remove(path)
-		return
-	}
 	step("Applying KB2921916 (this takes a few minutes) ...")
-	out, err := exec.Command("wusa", path, "/quiet", "/norestart").CombinedOutput()
+	out, err := exec.Command("wusa", dest, "/quiet", "/norestart").CombinedOutput()
 	if len(out) > 0 {
 		step("wusa output: %s", strings.TrimSpace(string(out)))
 	}

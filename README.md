@@ -18,17 +18,20 @@ wait, right `tailscale up` flags.
      **KB2921916** hotfix with a *clear warning + yes/no prompt* before any
      reboot.
    - **Windows 10 / 11** → latest stable MSI (amd64/arm64/x86).
-   - **macOS** → latest stable universal `.pkg` (Intel + Apple Silicon).
+   - **macOS** → headless standalone `tailscaled` client (no GUI app): via
+     **Homebrew** if present, else the **Go toolchain**, else printed manual
+     steps. Runs as a launchd daemon that boots before login.
    - **Linux** → latest static `.tgz` (amd64/arm64/arm/386), installed as a
      **systemd** service.
 2. Verifies the download with **SHA-256** against Tailscale's checksum endpoint
    (or a pinned hash for the legacy MSI/hotfix). Any mismatch aborts before
    anything is installed.
-3. Installs silently (Windows `msiexec`, macOS `installer -pkg`, Linux extract +
-   `systemctl enable --now tailscaled`).
-4. Waits for the Tailscale daemon/service to come up (poll, not a blind sleep).
+3. Installs: Windows `msiexec` (or downloads/verifies the package on
+   Windows/Linux); **macOS** installs the headless client with Homebrew or Go —
+   nothing extra is fetched when either is already present.
+4. Waits for the Tailscale daemon to come up (poll, not a blind sleep).
 5. Connects and advertises the subnet:
-   `tailscale up --auth-key=… [--unattended] --advertise-routes=192.168.1.0/24`.
+   `tailscale up --auth-key=… [--unattended] --accept-dns --advertise-routes=192.168.1.0/24`.
 6. Logs every step to `TailscaleMe.log` (in the temp folder), deletes the temp
    installer, and waits for Enter so the user can read the result.
 
@@ -37,13 +40,38 @@ elevates them on launch; Linux/macOS builds require `sudo`. Everything is built
 with **Go 1.20** so the Windows binaries also run on Win7/8 (current Go
 toolchains produce binaries that refuse to start there).
 
+## macOS headless mode
+
+macOS never installs the GUI app. It uses the standalone `tailscaled` client
+(the wiki-supported "Tailscaled on macOS" route), which:
+
+- runs as a LaunchDaemon (`/Library/LaunchDaemons/com.tailscale.tailscaled.plist`)
+  and starts **before any user logs in** — so a headless/SSH-managed Mac stays
+  connected across reboots;
+- needs **no "Allow VPN configuration" dialog** and no logged-in GUI session;
+- is installed only if a `tailscale` CLI is not already present:
+  1. **Homebrew** (`/opt/homebrew/bin/brew` or `/usr/local/bin/brew`) →
+     `brew install --formula tailscale` then `tailscaled install-system-daemon`;
+  2. else **Go toolchain** → `go install tailscale.com/cmd/tailscale{,d}@latest`
+     then `tailscaled install-system-daemon`;
+  3. else the tool prints exact manual steps and stops (nothing gets installed
+     that isn't needed to reach the objective).
+- enables **MagicDNS** best-effort by prepending `100.100.100.100` to the
+  primary network service's DNS servers (`networksetup`).
+
+**Double-click support:** if the binary is double-clicked in Finder (not run in
+a Terminal), the tool opens a Terminal window and re-runs itself under `sudo`
+so the password can be entered. The first time, macOS may ask once whether to
+let the tool control Terminal — click **OK**. If no one is logged in at the
+screen, it prints instructions instead of looping.
+
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `main.go` | Shared flow: detect, download, verify, connect, cleanup. |
 | `platform_windows.go` | Windows logic (msiexec, `sc query`, KB2921916, UAC). |
-| `platform_darwin.go` | macOS logic (`installer`, Tailscale.app daemon). |
+| `platform_darwin.go` | macOS headless logic (brew/go install, launchd, MagicDNS). |
 | `platform_linux.go` | Linux logic (tgz extract, systemd registration). |
 | `main.exe.manifest` | UAC `requireAdministrator` manifest (Windows only). |
 | `winres/winres.json` | go-winres config that embeds the manifest. |
@@ -172,8 +200,8 @@ Output — **one file per platform** in `dist/` (~5–7 MB each):
 | Windows ARM64 | `dist/TailscaleMe-windows-arm64.exe` | double-click (UAC prompt) |
 | Windows 32-bit (x86) | `dist/TailscaleMe-windows-386.exe` | double-click (UAC prompt) |
 | Windows 7 / 8 | `dist/TailscaleMe-windows-amd64.exe` | double-click (UAC prompt) |
-| macOS (Intel) | `dist/TailscaleMe-darwin-amd64` | terminal, `sudo ./…` |
-| macOS (Apple Silicon) | `dist/TailscaleMe-darwin-arm64` | terminal, `sudo ./…` |
+| macOS (Intel) | `dist/TailscaleMe-darwin-amd64` | double-click or terminal, `sudo ./…` |
+| macOS (Apple Silicon) | `dist/TailscaleMe-darwin-arm64` | double-click or terminal, `sudo ./…` |
 | Linux x86_64 | `dist/TailscaleMe-linux-amd64` | terminal, `sudo ./…` |
 | Linux ARM64 | `dist/TailscaleMe-linux-arm64` | terminal, `sudo ./…` |
 | Linux 32-bit ARM (Raspberry Pi) | `dist/TailscaleMe-linux-arm` | terminal, `sudo ./…` |
@@ -192,14 +220,15 @@ unsigned — click **More info → Run anyway** (code-signing removes this; it i
 the one optional cost). On Windows 7 only: if asked, approve the restart, then
 **re-run the tool** — it skips straight to connecting.
 
-**macOS** — run in Terminal:
+**macOS** — double-click the file, or run in Terminal:
 ```bash
 sudo ./TailscaleMe-darwin-arm64
 ```
-On first launch macOS shows a system dialog asking to allow **Tailscale**'s VPN
-configuration — the user must click **Allow**. The Tailscale menu bar app must
-be running (it opens automatically); the machine must have a user logged into
-the GUI session (pure SSH access cannot activate the macOS app daemon).
+Double-clicking opens a Terminal window that runs the tool under `sudo` (enter
+the password there). No VPN-configuration dialog is shown, and no user needs to
+stay logged in afterwards — the headless daemon runs from boot. Needs either
+**Homebrew** or the **Go toolchain** on the machine; if neither is present the
+tool prints exact manual steps (see [macOS headless mode](#macos-headless-mode)).
 
 **Linux** — run in a terminal with sudo:
 ```bash
@@ -229,10 +258,12 @@ Give them these instructions (also shown on screen):
    and after Windows comes back, double-click the file **again**.
 
 **macOS / Linux**
-1. Open a Terminal window in the folder holding the file.
-2. Run `sudo ./TailscaleMe-<darwin|linux>-<arch>` and type the password if asked.
-3. **macOS only:** click **Allow** if macOS asks about Tailscale's VPN
-   configuration.
+1. **macOS:** double-click the file, or open a Terminal in the folder and run
+   `sudo ./TailscaleMe-<darwin|linux>-<arch>`.
+2. Type the password if asked.
+3. **macOS only:** the first time you double-click, macOS may ask "…wants to
+   control Terminal" — click **OK** (this is the tool opening the Terminal
+   window that runs the setup).
 
 **All platforms** — wait 1–2 minutes; the window should end with
 **"Tailscale is connected and advertising routes."** Then they can close it.
@@ -251,9 +282,14 @@ The tool prints the log path at startup (`TailscaleMe.log` in the temp folder).
   may not start; the log records the outcome.
 - **Linux "systemd was not detected"** → the machine uses an init system other
   than systemd; the tool prints manual steps to run `tailscaled` instead.
-- **macOS "Timed out waiting for Tailscale"** → a user must be logged into the
-  Mac's GUI session and the Tailscale menu bar app running (SSH-only never
-  activates the macOS daemon); re-run once that's satisfied.
+- **macOS "Tailscale setup failed"** → the machine has neither Homebrew nor the
+  Go toolchain. The tool prints exact manual steps (`brew install --formula
+  tailscale`, `sudo brew services start tailscale`); install Homebrew and
+  re-run, or follow the printed commands.
+- **macOS MagicDNS names don't resolve** → the tool prepends `100.100.100.100`
+  to the primary network service's DNS servers; if that changed (e.g. a manual
+  network reset) set it again in System Settings → Network → Details → DNS.
+  Subnet routing works regardless.
 - **Can't reach LAN devices** → verify routes are accepted on the owner device
   (`tailscale up --accept-routes`), and that the advertised CIDR does not
   overlap your home subnet.

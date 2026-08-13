@@ -7,7 +7,7 @@ export CGO_ENABLED=0
 go mod download 2>/dev/null || true
 
 echo "==> Installing go-winres (embeds the UAC manifest into Windows exe) ..."
-go install github.com/tc-hib/go-winres@latest
+go install github.com/tc-hib/go-winres@v0.3.3
 export PATH="$PATH:$(go env GOPATH)/bin"
 
 echo "==> Generating Windows resources from main.exe.manifest ..."
@@ -26,6 +26,11 @@ fi
 if [ -z "$LDEXTRA" ]; then
   echo "WARNING: .authkey not found - building with placeholder key (will NOT authenticate)."
 fi
+
+# Stamp the build version into the binaries for diagnostics (git short sha, or
+# the date outside a git checkout).
+VERSION=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M)
+LDEXTRA="$LDEXTRA -X main.buildVersion=$VERSION"
 
 # Build with Go 1.20 so the Windows binaries also run on Windows 7/8.
 # (Binaries produced by Go >=1.21 refuse to start on Win7/8.)
