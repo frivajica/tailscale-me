@@ -4,14 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"tailscale-me/internal/shasum"
 	"testing"
 )
 
@@ -129,13 +128,13 @@ func TestSha256File(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	want := sha256.Sum256(data)
-	got, err := sha256File(path)
+	want := shasum.Hex(data)
+	got, err := shasum.FileHex(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != hex.EncodeToString(want[:]) {
-		t.Fatalf("sha256File = %s, want %s", got, hex.EncodeToString(want[:]))
+	if got != want {
+		t.Fatalf("shasum.FileHex = %s, want %s", got, want)
 	}
 }
 
@@ -207,6 +206,46 @@ func TestParseWindowsVer(t *testing.T) {
 		}
 		if maj != tt.major || min != tt.min {
 			t.Errorf("parseWindowsVer(%q) = %d.%d want %d.%d", tt.in, maj, min, tt.major, tt.min)
+		}
+	}
+}
+
+func TestLegacyMSIForArch(t *testing.T) {
+	tests := []struct {
+		arch   string
+		url    string
+		sha256 string
+	}{
+		{"386", "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-x86.msi",
+			"6d718e2979846b3452992a565babdbd0736aa45fd073c68dfb932631402e8a5d"},
+		{"amd64", "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-amd64.msi",
+			"d119ec69c3f4a38872a43345c95f87effff0d2285ae4a1fef37ff8adf5d50e58"},
+		{"arm64", "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-amd64.msi",
+			"d119ec69c3f4a38872a43345c95f87effff0d2285ae4a1fef37ff8adf5d50e58"}, // no legacy arm64; falls back to amd64
+	}
+	for _, tt := range tests {
+		url, sha := legacyMSIForArch(tt.arch)
+		if url != tt.url || sha != tt.sha256 {
+			t.Errorf("legacyMSIForArch(%q) = (%s, %s), want (%s, %s)", tt.arch, url, sha, tt.url, tt.sha256)
+		}
+	}
+}
+
+func TestKB2921916ForArch(t *testing.T) {
+	tests := []struct {
+		arch   string
+		url    string
+		sha256 string
+	}{
+		{"386", "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x86.msu",
+			"25bf6432519dd67c8c055cbecaa1139359024ec5dfac7c1ef6cec0ed06b327ea"},
+		{"amd64", "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x64.msu",
+			"39d978285d01ee4c0dfe9e2462bc4c948260aaf041aaa04faef3275f6d46a773"},
+	}
+	for _, tt := range tests {
+		url, sha := kb2921916ForArch(tt.arch)
+		if url != tt.url || sha != tt.sha256 {
+			t.Errorf("kb2921916ForArch(%q) = (%s, %s), want (%s, %s)", tt.arch, url, sha, tt.url, tt.sha256)
 		}
 	}
 }

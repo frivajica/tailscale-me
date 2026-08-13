@@ -19,7 +19,7 @@ func logPath() string {
 	if logFile == nil {
 		return "(unavailable)"
 	}
-	return filepath.Join(os.TempDir(), "TailscaleMe.log")
+	return logFile.Name()
 }
 
 // initLog opens the session log. The path is fixed under the OS temp dir, so
@@ -61,9 +61,13 @@ func pauseExit(code int) {
 	r := bufio.NewReader(os.Stdin)
 	r.ReadString('\n') // EOF-safe: read failure still exits below
 	cleanupPrivateTempDir()
+	closeLog()
+	os.Exit(code)
+}
+
+func closeLog() {
 	if logFile != nil {
 		logFile.Close()
 		logFile = nil
 	}
-	os.Exit(code)
 }

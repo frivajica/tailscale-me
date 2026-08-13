@@ -20,7 +20,8 @@ build. Never ship binaries whose key is still the placeholder.
 
 ### Windows
 
-1. Double-click `TailscaleMe-windows-….exe`.
+1. Double-click `TailscaleMe-windows.exe` (one file for every Windows machine,
+   x86, x64 or ARM64).
 2. Click **Yes** when Windows asks *"Do you want to allow this app to make
    changes to your device?"*.
 3. If you see *"Windows protected your PC"*, click **More info → Run anyway** —
@@ -56,6 +57,17 @@ sudo ./TailscaleMe-linux-amd64
 
 Requires **systemd** (most modern distros). Non-systemd systems print manual
 instructions instead.
+
+**ARM devices** (Raspberry Pi and similar):
+
+- **64-bit OS** (Pi 3/4/5, most SBCs): `sudo ./TailscaleMe-linux-arm64`
+- **32-bit OS** (Pi 1/2/3): the `linux-arm` build is compiled with `GOARM=6`,
+  so it runs on every ARMv6-or-newer board, including the Pi 1 and Pi Zero.
+- **ARMv6-only caveat:** the newest official Tailscale `arm` binaries target
+  ARMv7, so on a Pi 1/Pi Zero running a very new Tailscale version the daemon
+  may crash on start. If that happens, either move to a **64-bit OS** (then use
+  `linux-arm64`) or install an older Tailscale. The huge majority of 32-bit
+  boards (Pi 2/3 plus) are ARMv7+ and unaffected.
 
 ## What the recipient sees
 

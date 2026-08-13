@@ -51,8 +51,6 @@ func packageBase() (string, error) {
 	return "", fmt.Errorf("unsupported Linux architecture %q", runtime.GOARCH)
 }
 
-func packageLocalName() string { return "tailscale.tgz" }
-
 // installCLI fetches, verifies and extracts the static tarball, registers
 // tailscaled with systemd so the node persists across reboots, and returns the
 // CLI path. The package's own unit files expect tailscaled at /usr/sbin and an
@@ -67,7 +65,7 @@ func installCLI(legacy bool) (string, error) {
 			"auto-installs only on systemd systems. Manually extract the tarball " +
 			"and run: tailscaled --state=/var/lib/tailscale/tailscaled.state\n")
 	}
-	url, wantSHA, _, err := installerArtifact(legacy)
+	url, wantSHA, err := installerArtifact(legacy)
 	if err != nil {
 		return "", fmt.Errorf("installation package could not be prepared: %w", err)
 	}
@@ -175,15 +173,10 @@ func copyFileIfExists(src, dst string) error {
 }
 
 func findCLI() string {
-	for _, c := range []string{filepath.Join(sbindir, "tailscale"), filepath.Join(bindir, "tailscale")} {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	if p, err := exec.LookPath("tailscale"); err == nil {
-		return p
-	}
-	return ""
+	return findExecutable([]string{
+		filepath.Join(sbindir, "tailscale"),
+		filepath.Join(bindir, "tailscale"),
+	}, "tailscale")
 }
 
 func startDaemon(cli string) {}

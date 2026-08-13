@@ -50,7 +50,8 @@ toolchains produce binaries that refuse to start there).
    [admin console](https://login.tailscale.com/admin/settings/keys) and paste
    the `autoApprovers` ACL rule.
 2. **Build** — save the key as a gitignored `.authkey` file and run
-   `bash build.sh` (or `build.bat` on Windows). Nine binaries land in `dist/`.
+   `bash build.sh` (or `build.bat` on Windows). One universal Windows launcher
+   plus one binary per macOS/Linux platform land in `dist/`.
 3. **Deploy** — send each machine the one-file binary matching it; the person
    runs it once and it connects itself.
 
@@ -71,10 +72,15 @@ Full step-by-step guidance lives in the docs:
 | `platform_windows.go` | Windows logic (msiexec, `sc query`, KB2921916, UAC). |
 | `platform_darwin.go` | macOS headless logic (brew/go install, launchd, MagicDNS). |
 | `platform_linux.go` | Linux logic (tgz extract, systemd registration). |
-| `connect.go`, `log.go`, `util.go` | Shared connect/log/download/checksum helpers. |
+| `connect.go`, `log.go`, `util.go` | Shared connect/log/download helpers + parsers. |
 | `platform_package.go` | Package selection + checksum resolution (Windows/Linux). |
 | `main.exe.manifest` | UAC `requireAdministrator` manifest (Windows only). |
 | `winres/winres.json` | go-winres config that embeds the manifest. |
+| `launcher/windows/` | Universal Windows launcher (single 386 exe that unpacks the right per-arch installer). |
+| `internal/payload/` | Shared launcher/packer serialization (marker, gzip-tar append, extract, verify). |
+| `internal/shasum/` | Shared sha256 helpers (hex digest of bytes + files), used by all three binaries. |
+| `internal/wintarget/` | Single source for the Windows arch triple + payload member names. |
+| `tools/pack` | Packs the per-arch installers into `TailscaleMe-windows.exe` and verifies the payload. |
 | `ACL_Configuration.json` | `autoApprovers` ACL snippet + setup guidance. |
 | `docs/` | Full guides: [started](docs/GETTING_STARTED.md), [deploy](docs/DEPLOYING.md), [ACL](docs/ACL_AND_NETWORKING.md), [troubleshoot](docs/TROUBLESHOOTING.md). |
 | `build.sh` | macOS/Linux: cross-compiles the full matrix into `dist/`. |

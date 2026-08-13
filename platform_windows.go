@@ -13,13 +13,6 @@ import (
 	"time"
 )
 
-const (
-	// Windows 7 requires the KB2921916 hotfix for Go binaries to run. The
-	// mirror has no public checksum, so we pin the hash of the official file.
-	kb2921916URL    = "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x64.msu"
-	kb2921916SHA256 = "39d978285d01ee4c0dfe9e2462bc4c948260aaf041aaa04faef3275f6d46a773"
-)
-
 func bootstrap() {}
 
 func ensureElevated() error {
@@ -75,8 +68,6 @@ func packageBase() (string, error) {
 	return "", fmt.Errorf("unsupported Windows architecture %q", runtime.GOARCH)
 }
 
-func packageLocalName() string { return "tailscale-setup.msi" }
-
 // installCLI fetches and verifies the MSI, installs it silently, and returns
 // the CLI path. Skips straight to the CLI when Tailscale is already present.
 func installCLI(legacy bool) (string, error) {
@@ -84,7 +75,7 @@ func installCLI(legacy bool) (string, error) {
 		step("Tailscale is already installed at: %s (skipping install).", cli)
 		return cli, nil
 	}
-	url, wantSHA, _, err := installerArtifact(legacy)
+	url, wantSHA, err := installerArtifact(legacy)
 	if err != nil {
 		return "", fmt.Errorf("installation package could not be prepared: %w", err)
 	}
@@ -145,19 +136,10 @@ func msicode(c int) string {
 }
 
 func findCLI() string {
-	candidates := []string{
+	return findExecutable([]string{
 		filepath.Join(os.Getenv("ProgramFiles"), "Tailscale", "tailscale.exe"),
 		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Tailscale", "tailscale.exe"),
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	if p, err := exec.LookPath("tailscale.exe"); err == nil {
-		return p
-	}
-	return ""
+	}, "tailscale.exe")
 }
 
 func startDaemon(cli string) {}
@@ -197,7 +179,8 @@ func postConnect(cli string) {}
 // accepts the prompt.
 func installKB2921916() {
 	step("Downloading required Windows 7 update KB2921916 ...")
-	dest, err := downloadVerified(kb2921916URL, kb2921916SHA256)
+	url, sha := kb2921916ForArch(runtime.GOARCH)
+	dest, err := downloadVerified(url, sha)
 	if err != nil {
 		step("WARNING: could not download or verify KB2921916: %v", err)
 		step("If Tailscale fails to start afterwards, apply the update manually and reboot.")
@@ -234,9 +217,7 @@ func installKB2921916() {
 		step("Rebooting in 15 seconds. Re-run TailscaleMe.exe after restart.")
 		exec.Command("shutdown", "/r", "/t", "15",
 			"/c", "TailscaleMe: finishing the KB2921916 update.").Run()
-		if logFile != nil {
-			logFile.Close()
-		}
+		closeLog()
 		os.Exit(0)
 	}
 	step("No restart now. Please restart before the Tailscale step, then re-run this tool.")

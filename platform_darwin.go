@@ -107,10 +107,10 @@ func installCLI(legacy bool) (string, error) {
 			"(Leave it installed and route through the GUI app instead if you do " +
 			"not need headless boot-time startup.)\n    sudo " + filepath.Base(os.Args[0]))
 	}
-	if brew := lookPath("brew", "/opt/homebrew/bin/brew", "/usr/local/bin/brew"); brew != "" {
+	if brew := findExecutable([]string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew"}, "brew"); brew != "" {
 		return installViaBrew(brew)
 	}
-	if goCmd := lookPath("go"); goCmd != "" {
+	if goCmd := findExecutable(nil, "go"); goCmd != "" {
 		return installViaGo(goCmd)
 	}
 	return "", fmt.Errorf("Tailscale is not installed and neither Homebrew nor the Go " +
@@ -118,18 +118,6 @@ func installCLI(legacy bool) (string, error) {
 		"Option 1: install Homebrew from https://brew.sh, then re-run this tool.\n" +
 		"Option 2: log in at the Mac's screen and re-run this tool from a Terminal " +
 		"window with:\n    sudo " + filepath.Base(os.Args[0]))
-}
-
-func lookPath(name string, extra ...string) string {
-	for _, p := range extra {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
-	}
-	if p, err := exec.LookPath(name); err == nil {
-		return p
-	}
-	return ""
 }
 
 func installViaBrew(brew string) (string, error) {
@@ -207,15 +195,7 @@ func findTailscaled() string {
 }
 
 func findCLI() string {
-	for _, c := range cliCandidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	if p, err := exec.LookPath("tailscale"); err == nil {
-		return p
-	}
-	return ""
+	return findExecutable(cliCandidates, "tailscale")
 }
 
 // startDaemon ensures the LaunchDaemon is loaded. install-system-daemon and

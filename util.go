@@ -6,16 +6,16 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"tailscale-me/internal/shasum"
 	"time"
 )
 
@@ -25,8 +25,18 @@ var stableIndex = "https://pkgs.tailscale.com/stable/"
 const (
 	// v1.44.3 is the final Tailscale release supporting Windows 7/8. Keep this
 	// pinned: upgrading it silently bricks legacy machines.
-	legacyMSIURL    = "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-amd64.msi"
-	legacyMSISHA256 = "d119ec69c3f4a38872a43345c95f87effff0d2285ae4a1fef37ff8adf5d50e58"
+	legacyMSIX86URL      = "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-x86.msi"
+	legacyMSIX86SHA256   = "6d718e2979846b3452992a565babdbd0736aa45fd073c68dfb932631402e8a5d"
+	legacyMSIAMD64URL    = "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-amd64.msi"
+	legacyMSIAMD64SHA256 = "d119ec69c3f4a38872a43345c95f87effff0d2285ae4a1fef37ff8adf5d50e58"
+
+	// Windows 7 requires the KB2921916 hotfix for Go binaries to run. The
+	// mirror has no public checksum, so we pin the hashes of the official
+	// x86/x64 files.
+	kb2921916X86URL    = "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x86.msu"
+	kb2921916X86SHA256 = "25bf6432519dd67c8c055cbecaa1139359024ec5dfac7c1ef6cec0ed06b327ea"
+	kb2921916X64URL    = "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x64.msu"
+	kb2921916X64SHA256 = "39d978285d01ee4c0dfe9e2462bc4c948260aaf041aaa04faef3275f6d46a773"
 
 	downloadTimeout = 120 * time.Second
 	servicePollS    = 90 * time.Second
@@ -41,6 +51,25 @@ const (
 	downloadRetries = 3
 	retrySleep      = 2 * time.Second
 )
+
+// legacyMSIForArch returns the pinned v1.44.3 MSI matching the running Windows
+// architecture. The 386 binary also runs on 64-bit Windows via WOW64, so it
+// must download the x86 installer rather than the amd64 default.
+func legacyMSIForArch(arch string) (url, wantSHA string) {
+	if arch == "386" {
+		return legacyMSIX86URL, legacyMSIX86SHA256
+	}
+	return legacyMSIAMD64URL, legacyMSIAMD64SHA256
+}
+
+// kb2921916ForArch returns the KB2921916 hotfix matching the running Windows
+// architecture; x64 is the default for any arch without a dedicated hotfix.
+func kb2921916ForArch(arch string) (url, wantSHA string) {
+	if arch == "386" {
+		return kb2921916X86URL, kb2921916X86SHA256
+	}
+	return kb2921916X64URL, kb2921916X64SHA256
+}
 
 // ---- Downloads & integrity --------------------------------------------------
 
@@ -131,30 +160,12 @@ func downloadVerified(url, wantSHA string) (string, error) {
 	if err := os.WriteFile(dest, b, 0600); err != nil {
 		return "", err
 	}
-	got := sha256Hex(b)
+	got := shasum.Hex(b)
 	if !strings.EqualFold(got, wantSHA) {
 		os.Remove(dest)
 		return "", fmt.Errorf("SHA-256 mismatch: expected %s, got %s", wantSHA, got)
 	}
 	return dest, nil
-}
-
-func sha256Hex(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // fetchSHA256 retrieves the pinned checksum Tailscale publishes next to each
@@ -243,6 +254,20 @@ func checkAuthKeyReady() error {
 			"Rebuild with build.sh/build.bat after creating a .authkey file (see README § Store the key).")
 	}
 	return nil
+}
+
+// findExecutable returns the first candidate path that is a regular file, then
+// falls back to PATH lookup for command.
+func findExecutable(candidates []string, command string) string {
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return c
+		}
+	}
+	if p, err := exec.LookPath(command); err == nil {
+		return p
+	}
+	return ""
 }
 
 // ---- Pure parsers (unit-testable, no process I/O) ---------------------------

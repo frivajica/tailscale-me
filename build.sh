@@ -10,8 +10,9 @@ echo "==> Installing go-winres (embeds the UAC manifest into Windows exe) ..."
 go install github.com/tc-hib/go-winres@v0.3.3
 export PATH="$PATH:$(go env GOPATH)/bin"
 
-echo "==> Generating Windows resources from main.exe.manifest ..."
-go-winres make
+echo "==> Generating Windows resources (installers: 386+amd64+arm64, launcher: 386) ..."
+go-winres make --arch=386,amd64,arm64
+( cd launcher/windows && go-winres make --arch=386 )
 
 # Read the auth key from the gitignored .authkey file (one line) so the secret
 # never lands in git. If it is missing, the build still succeeds with the
@@ -47,9 +48,33 @@ build() { # <os> <arch> [goarm]
     go build -trimpath -ldflags="-s -w $LDEXTRA" -o "$name" .
 }
 
+# The three Windows per-arch installers are now payload members inside the
+# universal launcher (below) and are removed from dist/ afterwards.
 build windows amd64
 build windows arm64
 build windows 386
+
+echo ""
+echo "==> Packing universal Windows launcher (contains all 3 per-arch installers) ..."
+SHAS=$(go run ./tools/pack shas \
+  dist/TailscaleMe-windows-386.exe \
+  dist/TailscaleMe-windows-amd64.exe \
+  dist/TailscaleMe-windows-arm64.exe)
+echo "==> Building launcher (windows/386) ..."
+GOOS=windows GOARCH=386 go build -trimpath \
+  -ldflags="-s -w $SHAS" \
+  -o dist/.launcher-tmp.exe ./launcher/windows
+go run ./tools/pack append \
+  -out dist/TailscaleMe-windows.exe \
+  -launcher dist/.launcher-tmp.exe \
+  -386   dist/TailscaleMe-windows-386.exe \
+  -amd64 dist/TailscaleMe-windows-amd64.exe \
+  -arm64 dist/TailscaleMe-windows-arm64.exe
+rm -f dist/.launcher-tmp.exe \
+      dist/TailscaleMe-windows-386.exe \
+      dist/TailscaleMe-windows-amd64.exe \
+      dist/TailscaleMe-windows-arm64.exe
+
 build darwin amd64
 build darwin arm64
 build linux amd64
@@ -62,8 +87,8 @@ echo "Done. Binaries in dist/:"
 ls -1 dist/
 
 echo ""
-echo "Sanity check (windows/amd64): must embed the requireAdministrator manifest."
-if grep -aqi "requireAdministrator" dist/TailscaleMe-windows-amd64.exe; then
+echo "Sanity check (universal Windows launcher): must embed the requireAdministrator manifest."
+if grep -aqi "requireAdministrator" dist/TailscaleMe-windows.exe; then
   echo "OK - UAC elevation manifest is embedded."
 else
   echo "FAIL - manifest NOT embedded; do not ship these binaries."

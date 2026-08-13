@@ -75,31 +75,40 @@ build.bat
 
 Both scripts:
 
-1. Install `github.com/tc-hib/go-winres` and embed `main.exe.manifest`
-   (Windows targets only).
+1. Install `github.com/tc-hib/go-winres` and embed the
+   `requireAdministrator` manifest into the Windows targets and the launcher.
 2. Inject the key from `.authkey` via `-ldflags -X main.authKey=…` (warns if
    missing).
-3. Cross-compile the full matrix with `CGO_ENABLED=0`, pinning
-   `GOTOOLCHAIN=go1.20.14`.
-4. Verify the Windows amd64 build contains `requireAdministrator` and fail the
-   build if not.
+3. Build the three Windows per-arch installers, then pack them into the
+   universal `TailscaleMe-windows.exe` launcher via `tools/pack` (which also
+   embeds each installer's SHA-256 so a tampered payload is rejected at run
+   time).
+4. Cross-compile the macOS and Linux targets with `CGO_ENABLED=0`, pinning
+   `GOTOOLCHAIN=go1.20.14` (so the Windows binaries still run on Windows 7/8).
+5. Run a sanity check that the Windows build embeds `requireAdministrator` and
+   fail the build if not.
 
 ## Output
 
-One file per platform in `dist/` (~5–7 MB each):
+One file per platform in `dist/` (~5–8 MB each):
 
 | Target machine | File to send | Run as |
 | --- | --- | --- |
-| Windows 10/11 (Intel 64-bit) | `dist/TailscaleMe-windows-amd64.exe` | double-click (UAC prompt) |
-| Windows ARM64 | `dist/TailscaleMe-windows-arm64.exe` | double-click (UAC prompt) |
-| Windows 32-bit (x86) | `dist/TailscaleMe-windows-386.exe` | double-click (UAC prompt) |
-| Windows 7 / 8 | `dist/TailscaleMe-windows-amd64.exe` | double-click (UAC prompt) |
+| Any Windows (x86, x64, ARM64; 7–11) | `dist/TailscaleMe-windows.exe` | double-click (UAC prompt) |
 | macOS (Intel) | `dist/TailscaleMe-darwin-amd64` | double-click or terminal, `sudo ./…` |
 | macOS (Apple Silicon) | `dist/TailscaleMe-darwin-arm64` | double-click or terminal, `sudo ./…` |
 | Linux x86_64 | `dist/TailscaleMe-linux-amd64` | terminal, `sudo ./…` |
 | Linux ARM64 | `dist/TailscaleMe-linux-arm64` | terminal, `sudo ./…` |
 | Linux 32-bit ARM (Raspberry Pi) | `dist/TailscaleMe-linux-arm` | terminal, `sudo ./…` |
 | Linux 32-bit x86 | `dist/TailscaleMe-linux-386` | terminal, `sudo ./…` |
+
+The single `TailscaleMe-windows.exe` is a universal launcher: it is a 32-bit
+exe that runs on every Windows machine (natively on 32-bit, via WOW64 on
+64-bit Intel, via emulation on Windows ARM64), then detects the real CPU and
+runs the matching per-arch installer that it carries inside itself. The three
+per-arch installers (`TailscaleMe-windows-386.exe`, `-amd64.exe`, `-arm64.exe`)
+are built as payload members during the pack step and are no longer shipped
+separately.
 
 ## Customizing the subnet
 
