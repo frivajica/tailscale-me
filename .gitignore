@@ -1,4 +1,5 @@
 # Build artifacts — the exe embeds the auth key, never commit it
+/dist/
 /TailscaleMe.exe
 *.exe
 *.syso

@@ -28,21 +28,15 @@ var authKey = "tskey-auth-YOUR_AUTH_KEY_HERE"
 // home LAN.
 const subnetRoute = "192.168.1.0/24"
 
-// ---------------------------------------------------------------------------
+// ---- Shared constants -------------------------------------------------------
 
 const (
-	latestMSIURL = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-	stableIndex  = "https://pkgs.tailscale.com/stable/"
+	stableIndex = "https://pkgs.tailscale.com/stable/"
 
 	// v1.44.3 is the final Tailscale release supporting Windows 7/8. Keep this
 	// pinned: upgrading it silently bricks legacy machines.
 	legacyMSIURL    = "https://pkgs.tailscale.com/stable/tailscale-setup-1.44.3-amd64.msi"
 	legacyMSISHA256 = "d119ec69c3f4a38872a43345c95f87effff0d2285ae4a1fef37ff8adf5d50e58"
-
-	// Windows 7 requires the KB2921916 hotfix for Go binaries to run. The
-	// mirror has no public checksum, so we pin the hash of the official file.
-	kb2921916URL    = "https://pkgs.tailscale.com/mirror/Windows6.1-KB2921916-x64.msu"
-	kb2921916SHA256 = "39d978285d01ee4c0dfe9e2462bc4c948260aaf041aaa04faef3275f6d46a773"
 
 	downloadTimeout = 120 * time.Second
 	servicePollS    = 90 * time.Second
@@ -58,51 +52,77 @@ func main() {
 	step("Welcome to the Tailscale family-business setup tool.")
 	step("A full log of this session is saved to: %s", logPath())
 
-	if !isElevated() {
-		fatal("This tool must run as Administrator. Right-click TailscaleMe.exe " +
-			"and choose \"Run as administrator\", then click Yes on the UAC prompt.")
+	if err := ensureElevated(); err != nil {
+		fatal("%s", err)
 	}
 
-	major, minor, err := windowsVersion()
-	if err != nil {
-		fatal("Could not detect the Windows version: %v", err)
-	}
-	legacy := major == 6 // Windows 7 (6.1), 8 (6.2), 8.1 (6.3)
+	legacy := isLegacyPlatform()
 	if legacy {
-		step("Detected legacy Windows %d.%d - using Tailscale v1.44.3 (final release for this OS).", major, minor)
+		step("Detected %s - using Tailscale v1.44.3 (final release for this OS).", platformDesc())
 	} else {
-		step("Detected Windows %d.%d - using the latest Tailscale release.", major, minor)
+		step("Detected %s - using the latest Tailscale release.", platformDesc())
 	}
+	preInstall(legacy)
 
-	if major == 6 && minor == 1 {
-		installKB2921916()
-	}
-
-	msiPath, err := downloadInstaller(legacy)
+	url, wantSHA, localName, err := installerArtifact(legacy)
 	if err != nil {
 		fatal("Installation package could not be prepared: %v", err)
 	}
+	dest := filepath.Join(os.TempDir(), localName)
+	step("Downloading installer %s ...", url)
+	if err := downloadFile(url, dest); err != nil {
+		os.Remove(dest)
+		fatal("Download failed: %v", err)
+	}
+	step("Verifying installer integrity (SHA-256) ...")
+	got, err := sha256File(dest)
+	if err != nil {
+		os.Remove(dest)
+		fatal("Could not hash the downloaded installer: %v", err)
+	}
+	if !strings.EqualFold(got, wantSHA) {
+		os.Remove(dest)
+		fatal("SHA-256 mismatch: expected %s, got %s", wantSHA, got)
+	}
+	step("Installer verified.")
 
-	if exe := findTailscale(); exe != "" {
-		step("Tailscale is already installed at: %s (skipping msiexec).", exe)
+	if cli := findCLI(); cli != "" {
+		step("Tailscale is already installed at: %s (skipping install).", cli)
 	} else {
-		if err := runMSI(msiPath); err != nil {
-			os.Remove(msiPath)
-			fatal("Silent installation failed: %v", err)
+		if err := installPackage(dest); err != nil {
+			os.Remove(dest)
+			fatal("Installation failed: %v", err)
 		}
 	}
-	os.Remove(msiPath)
+	os.Remove(dest)
 	step("Temporary installation files cleaned up.")
-	exe := findTailscale()
-	if exe == "" {
-		fatal("tailscale.exe was not found after installation. Check %s for the last steps.", logPath())
+
+	cli := findCLI()
+	if cli == "" {
+		fatal("The tailscale CLI was not found after installation. Check %s for the last steps.",
+			logPath())
 	}
 
-	waitForService()
-	runTailscaleUp(exe)
+	startDaemon(cli)
+	waitDaemon(cli)
+	runTailscaleUp(cli)
 
 	pauseExit(0)
 }
+
+// ---- Platform hooks (implemented per-OS in platform_*.go) ------------------
+//
+//	ensureElevated() (error, string)  - verifies admin/root rights
+//	isLegacyPlatform() bool           - legacy Windows 7/8 needs the pinned MSI
+//	platformDesc() string             - human-readable OS description
+//	preInstall(legacy bool)           - platform prep before the package step
+//	packageBase() (string, error)     - Sprintf template for the package URL
+//	packageLocalName() string         - temp file name to save the package as
+//	installPackage(path) error        - install the downloaded package
+//	findCLI() string                  - locate the tailscale CLI
+//	startDaemon(cli)                  - best-effort daemon bring-up
+//	waitDaemon(cli)                   - wait until the daemon is reachable
+//	upArgs() []string                 - args for `tailscale up`
 
 // ---- Logging ---------------------------------------------------------------
 
@@ -153,88 +173,6 @@ func pauseExit(code int) {
 	os.Exit(code)
 }
 
-// ---- Environment checks ----------------------------------------------------
-
-func isElevated() bool {
-	return exec.Command("net", "session").Run() == nil
-}
-
-func windowsVersion() (major, minor int, err error) {
-	out, err := exec.Command("cmd", "/c", "ver").CombinedOutput()
-	if err != nil {
-		return 0, 0, fmt.Errorf("cmd /c ver failed: %v", err)
-	}
-	re := regexp.MustCompile(`(\d+)\.(\d+)\.\d+`)
-	m := re.FindStringSubmatch(string(out))
-	if len(m) != 3 {
-		return 0, 0, fmt.Errorf("could not parse version from %q", out)
-	}
-	major, err = strconv.Atoi(m[1])
-	if err != nil {
-		return 0, 0, err
-	}
-	minor, err = strconv.Atoi(m[2])
-	return major, minor, err
-}
-
-// ---- Windows 7 hotfix ------------------------------------------------------
-
-// installKB2921916 downloads, verifies and silently applies the hotfix. It
-// never forces a reboot: it warns first and only reboots after the user
-// accepts the prompt.
-func installKB2921916() {
-	path := filepath.Join(os.TempDir(), "Windows6.1-KB2921916-x64.msu")
-	step("Downloading required Windows 7 update KB2921916 ...")
-	if err := downloadFile(kb2921916URL, path); err != nil {
-		step("WARNING: could not download KB2921916: %v", err)
-		step("If Tailscale fails to start afterwards, apply the update manually and reboot.")
-		return
-	}
-	got, err := sha256File(path)
-	if err != nil || !strings.EqualFold(got, kb2921916SHA256) {
-		step("WARNING: KB2921916 checksum mismatch (%s), discarding file.", got)
-		os.Remove(path)
-		return
-	}
-	step("Applying KB2921916 (this takes a few minutes) ...")
-	out, err := exec.Command("wusa", path, "/quiet", "/norestart").CombinedOutput()
-	if len(out) > 0 {
-		step("wusa output: %s", strings.TrimSpace(string(out)))
-	}
-	if err == nil {
-		step("KB2921916 is installed - no reboot required.")
-		return
-	}
-	rebootRequired := false
-	if ee, ok := err.(*exec.ExitError); ok {
-		// 3010 = success + reboot required; 0x80240017 = already installed.
-		if ee.ExitCode() == 3010 || ee.ExitCode() == 0x80240017 {
-			rebootRequired = true
-		}
-	}
-	if !rebootRequired {
-		step("WARNING: KB2921916 step returned %v (it may already be installed).", err)
-		step("Continuing as best-effort; if Tailscale fails, apply the update manually and reboot.")
-		return
-	}
-	step("KB2921916 was installed but Windows needs ONE restart to finish it.")
-	fmt.Print("A restart will close this tool. Run TailscaleMe.exe again after " +
-		"Windows comes back (it will skip straight to connecting).\n")
-	fmt.Print("Restart now? (Y/N): ")
-	ans := bufio.NewReader(os.Stdin)
-	line, _ := ans.ReadString('\n')
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "Y") {
-		step("Rebooting in 15 seconds. Re-run TailscaleMe.exe after restart.")
-		exec.Command("shutdown", "/r", "/t", "15",
-			"/c", "TailscaleMe: finishing the KB2921916 update.").Run()
-		if logFile != nil {
-			logFile.Close()
-		}
-		os.Exit(0)
-	}
-	step("No restart now. Please restart before the Tailscale step, then re-run this tool.")
-}
-
 // ---- Download & checksum verification -------------------------------------
 
 func downloadFile(url, dest string) error {
@@ -277,48 +215,35 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// downloadInstaller picks the correct MSI for the OS, downloads it, resolves
-// the expected SHA-256 (latest = fresh from the package index; legacy = pinned)
-// and aborts on any mismatch.
-func downloadInstaller(legacy bool) (string, error) {
-	var url, wantSHA string
+// installerArtifact decides which package to fetch. Legacy Windows uses the
+// pinned v1.44.3 MSI; everything else resolves the newest stable version from
+// the package index and verifies against its versioned .sha256 endpoint (the
+// "latest" aliases do not expose one). This keeps the tool auto-updated yet
+// tamper-proof on every platform.
+func installerArtifact(legacy bool) (url, wantSHA, localName string, err error) {
 	if legacy {
-		url, wantSHA = legacyMSIURL, legacyMSISHA256
-	} else {
-		verRaw, err := fetchRemoteSHA256()
-		if err != nil {
-			return "", err
-		}
-		url = fmt.Sprintf("https://pkgs.tailscale.com/stable/tailscale-setup-%s-amd64.msi", verRaw)
-		wantSHA, err = fetchRemoteSHA256For(verRaw)
-		if err != nil {
-			return "", err
-		}
+		return legacyMSIURL, legacyMSISHA256, "tailscale-setup.msi", nil
 	}
-
-	dest := filepath.Join(os.TempDir(), "tailscale-setup.msi")
-	step("Downloading installer %s ...", url)
-	if err := downloadFile(url, dest); err != nil {
-		return "", fmt.Errorf("download failed: %v", err)
-	}
-	step("Verifying installer integrity (SHA-256) ...")
-	got, err := sha256File(dest)
+	version, err := fetchLatestVersion()
 	if err != nil {
-		os.Remove(dest)
-		return "", err
+		return "", "", "", err
 	}
-	if !strings.EqualFold(got, wantSHA) {
-		os.Remove(dest)
-		return "", fmt.Errorf("SHA-256 mismatch: expected %s, got %s", wantSHA, got)
+	base, err := packageBase()
+	if err != nil {
+		return "", "", "", err
 	}
-	step("Installer verified.")
-	return dest, nil
+	url = "https://pkgs.tailscale.com/stable/" + fmt.Sprintf(base, version)
+	wantSHA, err = fetchSHA256(url + ".sha256")
+	if err != nil {
+		return "", "", "", err
+	}
+	return url, wantSHA, packageLocalName(), nil
 }
 
-// fetchRemoteSHA256 resolves the newest stable version so the downloaded file
-// can be checked against the versioned .sha256 endpoint (the "latest" alias
-// does not expose one). This keeps the tool auto-updated yet tamper-proof.
-func fetchRemoteSHA256() (string, error) {
+// fetchLatestVersion parses the newest stable release number from the package
+// index. The pattern matches every platform's naming scheme, so one function
+// serves Windows, macOS and Linux.
+func fetchLatestVersion() (string, error) {
 	client := &http.Client{Timeout: downloadTimeout}
 	resp, err := client.Get(stableIndex)
 	if err != nil {
@@ -329,7 +254,7 @@ func fetchRemoteSHA256() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	re := regexp.MustCompile(`tailscale-setup-(\d+\.\d+\.\d+)-amd64\.msi`)
+	re := regexp.MustCompile(`(?i)tailscale[_-](\d+\.\d+\.\d+)`)
 	matches := re.FindAllStringSubmatch(string(body), -1)
 	best := ""
 	for _, m := range matches {
@@ -338,15 +263,14 @@ func fetchRemoteSHA256() (string, error) {
 		}
 	}
 	if best == "" {
-		return "", fmt.Errorf("no amd64 installer version found on the package index")
+		return "", fmt.Errorf("no Tailscale version found on the package index")
 	}
 	return best, nil
 }
 
-func fetchRemoteSHA256For(version string) (string, error) {
+func fetchSHA256(url string) (string, error) {
 	client := &http.Client{Timeout: downloadTimeout}
-	resp, err := client.Get(fmt.Sprintf(
-		"https://pkgs.tailscale.com/stable/tailscale-setup-%s-amd64.msi.sha256", version))
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -381,102 +305,12 @@ func compareVersions(a, b string) int {
 	return 0
 }
 
-// ---- Installation ----------------------------------------------------------
-
-func runMSI(msiPath string) error {
-	step("Installing Tailscale silently (msiexec /quiet) ...")
-	cmd := exec.Command("msiexec", "/i", msiPath, "/quiet", "/norestart")
-	out, err := cmd.CombinedOutput()
-	if len(out) > 0 {
-		step("msiexec output: %s", strings.TrimSpace(string(out)))
-	}
-	if err != nil {
-		code := -1
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		}
-		switch code {
-		case 0, 3010:
-			step("Installation reported success (exit code %d).", code)
-			return nil
-		case 1602, 1603, 1618, 1622, 1638:
-			return fmt.Errorf("msiexec failed with code %d (%s); see the log for details",
-				code, msicode(code))
-		default:
-			return fmt.Errorf("msiexec failed with code %d", code)
-		}
-	}
-	return nil
-}
-
-func msicode(c int) string {
-	switch c {
-	case 1602:
-		return "user cancelled"
-	case 1603:
-		return "fatal error during installation"
-	case 1618:
-		return "another installation is already running"
-	case 1622:
-		return "error opening installation log file"
-	case 1638:
-		return "another version of this product is already installed"
-	}
-	return "unknown error"
-}
-
-func findTailscale() string {
-	candidates := []string{
-		filepath.Join(os.Getenv("ProgramFiles"), "Tailscale", "tailscale.exe"),
-		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Tailscale", "tailscale.exe"),
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	if p, err := exec.LookPath("tailscale.exe"); err == nil {
-		return p
-	}
-	return ""
-}
-
-// waitForService polls the Tailscale Windows service until it is RUNNING,
-// replacing a blind sleep with a deterministic readiness check.
-func waitForService() {
-	step("Waiting for the Tailscale service to start ...")
-	deadline := time.Now().Add(servicePollS)
-	for time.Now().Before(deadline) {
-		if serviceRunning() {
-			step("Tailscale service is running.")
-			time.Sleep(3 * time.Second) // let the daemon finish initialising
-			return
-		}
-		time.Sleep(serviceTick)
-	}
-	step("Timed out waiting for the Tailscale service; attempting to continue anyway.")
-	time.Sleep(5 * time.Second)
-}
-
-func serviceRunning() bool {
-	out, err := exec.Command("sc", "query", "Tailscale").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), "RUNNING")
-}
-
 // ---- Connect & advertise routes -------------------------------------------
 
-func runTailscaleUp(exe string) {
+func runTailscaleUp(cli string) {
 	step("Connecting to your tailnet and advertising subnet %s ...", subnetRoute)
-	args := []string{
-		"up",
-		"--auth-key=" + authKey,
-		"--unattended",
-		"--advertise-routes=" + subnetRoute,
-	}
-	cmd := exec.Command(exe, args...)
+	args := append(upArgs(), "--auth-key="+authKey, "--advertise-routes="+subnetRoute)
+	cmd := exec.Command(cli, args...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if text != "" {
