@@ -21,19 +21,20 @@ build. Never ship binaries whose key is still the placeholder
 
 ### Windows
 
-1. Double-click `TailscaleMe-windows.exe` (one file for every Windows machine,
+1. Extract `TailscaleMe-windows.zip` (removes the Windows SmartScreen block).
+2. Double-click `TailscaleMe-windows.exe` (one file for every Windows machine,
    x86, x64 or ARM64).
-2. Click **Yes** when Windows asks *"Do you want to allow this app to make
+3. Click **Yes** when Windows asks *"Do you want to allow this app to make
    changes to your device?"*.
-3. If you see *"Windows protected your PC"*, click **More info → Run anyway** —
+4. If you see *"Windows protected your PC"*, click **More info → Run anyway** —
    this is expected because the program isn't Microsoft-signed.
-4. **Windows 7 only:** if it asks whether to restart, click **Yes / Restart**,
+5. **Windows 7 only:** if it asks whether to restart, click **Yes / Restart**,
    and after Windows comes back, double-click the file again — it skips
    straight to connecting.
 
 ### macOS
 
-Double-click the file, or run in a terminal:
+Extract the zip, then double-click the file, or run in a terminal:
 
 ```bash
 sudo ./TailscaleMe-darwin-arm64   # use -amd64 on Intel

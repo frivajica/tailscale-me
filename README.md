@@ -97,7 +97,7 @@ Full step-by-step guidance lives in the docs:
 | `internal/shasum/` | Shared sha256 helpers (hex digest of bytes + files), used by all three binaries. |
 | `internal/wintarget/` | Single source for the Windows arch triple + payload member names. |
 | `tools/pack` | Packs the per-arch installers into `TailscaleMe-windows.exe` and verifies the payload. |
-| `tools/aclcheck` | Verifies your tailnet ACL covers the SSH rules before building (build.sh/build.bat call it when `TS_API_TOKEN`/`--api-token` is set). |
+| `tools/aclcheck` | Verifies your tailnet ACL covers the SSH rules before building (build.sh/build.bat call it when `TS_API_TOKEN`/`--api-token` or OAuth credentials are set). |
 | `ACL_Configuration.json` | `autoApprovers` ACL snippet + setup guidance. |
 | `docs/` | Full guides: [started](docs/GETTING_STARTED.md), [deploy](docs/DEPLOYING.md), [ACL](docs/ACL_AND_NETWORKING.md), [troubleshoot](docs/TROUBLESHOOTING.md). |
 | `build.sh` | macOS/Linux: cross-compiles the full matrix into `dist/`. |

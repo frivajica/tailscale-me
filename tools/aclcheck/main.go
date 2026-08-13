@@ -18,16 +18,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
 const (
-	apiBase    = "https://api.tailscale.com/api/v2"
-	exitPass   = 0
-	exitWarn   = 0 // warn only: the build must not be silently blocked on guesses
-	exitStrict = 1
+	apiBase     = "https://api.tailscale.com/api/v2"
+	oauthToken  = "https://api.tailscale.com/api/v2/oauth/token"
+	exitPass    = 0
+	exitWarn    = 0 // warn only: the build must not be silently blocked on guesses
+	exitStrict  = 1
 )
 
 type rule struct {
@@ -189,7 +191,9 @@ func report(code int, name, problem, fix string, strict bool) int {
 }
 
 func main() {
-	token := flag.String("token", envOr("TS_API_TOKEN", ""), "Tailscale API token (PAT or OAuth client; also TS_API_TOKEN)")
+	token := flag.String("token", envOr("TS_API_TOKEN", ""), "Tailscale API token (also TS_API_TOKEN)")
+	clientID := flag.String("client-id", envOr("TS_OAUTH_CLIENT_ID", ""), "OAuth client ID (also TS_OAUTH_CLIENT_ID)")
+	clientSecret := flag.String("client-secret", envOr("TS_OAUTH_CLIENT_SECRET", ""), "OAuth client secret (also TS_OAUTH_CLIENT_SECRET)")
 	tailnet := flag.String("tailnet", envOr("TS_TAILNET", ""), "tailnet name (defaults to the token's tailnet via /whoami)")
 	tag := flag.String("tag", envOr("TS_TAG", "tag:managed"), "managed tag to require in the ACL rules")
 	strict := flag.Bool("strict", false, "exit non-zero when a required rule is missing")
@@ -199,12 +203,27 @@ func main() {
 		*tag = "tag:managed"
 	}
 
-	if *token == "" {
-		fmt.Println("aclcheck: skipped (no API token; set --token or TS_API_TOKEN to verify the ACL for the SSH rules).")
+	if *token == "" && *clientID == "" {
+		fmt.Println("aclcheck: skipped (no API token or OAuth credentials; set --token, --client-id/--client-secret, or TS_API_TOKEN to verify the ACL for the SSH rules).")
 		return
 	}
 
-	c := &tailnetClient{base: *base, token: *token, tailnet: *tailnet,
+	effectiveToken := *token
+	if effectiveToken == "" && *clientID != "" {
+		if *clientSecret == "" {
+			fmt.Println("aclcheck: --client-secret is required when --client-id is provided.")
+			os.Exit(1)
+		}
+		fmt.Println("aclcheck: exchanging OAuth credentials for an access token ...")
+		var err error
+		effectiveToken, err = exchangeOAuth(*clientID, *clientSecret)
+		if err != nil {
+			fmt.Printf("aclcheck: OAuth token exchange failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	c := &tailnetClient{base: *base, token: effectiveToken, tailnet: *tailnet,
 		hc: &http.Client{Timeout: 30 * time.Second}}
 	name, err := c.resolveTailnet()
 	if err != nil {
@@ -225,4 +244,33 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// exchangeOAuth exchanges client ID + secret for a short-lived access token.
+func exchangeOAuth(clientID, clientSecret string) (string, error) {
+	resp, err := http.PostForm(oauthToken, url.Values{
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OAuth token endpoint returned HTTP %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var t struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(b, &t); err != nil {
+		return "", fmt.Errorf("could not parse OAuth response: %w", err)
+	}
+	if t.AccessToken == "" {
+		return "", fmt.Errorf("OAuth response did not include an access_token")
+	}
+	return t.AccessToken, nil
 }

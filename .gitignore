@@ -5,6 +5,8 @@
 *.exe
 *.syso
 /tmp/
+/aclcheck
+/pack
 
 # Secrets — never commit a live auth key or SSH private key
 .authkey

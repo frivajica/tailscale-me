@@ -18,6 +18,8 @@ set ALLOWCIDR_ARG=
 set SSHPASS_ARG=
 set SSHPASSAUTH_ARG=
 set APITOKEN_ARG=
+set CLIENTID_ARG=
+set CLIENTSECRET_ARG=
 set TAILNET_ARG=
 set TAG_ARG=
 set STRICT_ACL_ARG=
@@ -84,6 +86,26 @@ if /i "%~1"=="--api-token" (
   shift
   goto args
 )
+if /i "%~1"=="--client-id" (
+  if "%~2"=="" (
+    echo ERROR: --client-id needs a value
+    goto usage_err
+  )
+  set "CLIENTID_ARG=%~2"
+  shift
+  shift
+  goto args
+)
+if /i "%~1"=="--client-secret" (
+  if "%~2"=="" (
+    echo ERROR: --client-secret needs a value
+    goto usage_err
+  )
+  set "CLIENTSECRET_ARG=%~2"
+  shift
+  shift
+  goto args
+)
 if /i "%~1"=="--tailnet" (
   if "%~2"=="" (
     echo ERROR: --tailnet needs a value
@@ -140,6 +162,8 @@ echo   --ssh-password ^<pw^>   optional Windows password when an admin account h
 echo   --ssh-password-auth ^<no^|keep^>
 echo                        Windows SSH password auth: ""/no = key-only on fresh installs; keep = leave enabled ^(env SSHPASSAUTH, file .sshpassauth^)
 echo   --api-token ^<token^>  Tailscale API token to verify the ACL covers SSH ^(env TS_API_TOKEN^)
+echo   --client-id ^<id^>     OAuth client ID for ACL check ^(env TS_OAUTH_CLIENT_ID^)
+echo   --client-secret ^<s^>  OAuth client secret for ACL check ^(env TS_OAUTH_CLIENT_SECRET^)
 echo   --tailnet ^<name^>     tailnet for the ACL check ^(default: the token's tailnet^)
 echo   --tag ^<tag:managed^>  managed tag the ACL check requires ^(env TS_TAG^)
 echo   --strict-acl          fail the build when an ACL rule is missing
@@ -258,10 +282,14 @@ if not defined CIDR if exist .allow-cidr set /p CIDR=<.allow-cidr
 if defined CIDR set "LDEXTRA=!LDEXTRA! -X main.sshAllowCIDR=!CIDR!"
 
 rem Optional preflight: verify the tailnet ACL covers the SSH rules. Only runs
-rem when an API token is provided (--api-token / TS_API_TOKEN env); --strict-acl
-rem turns a missing rule into a hard build failure.
+rem when an API token or OAuth credentials are provided; --strict-acl turns a
+rem missing rule into a hard build failure.
 set "APITOKEN=%APITOKEN_ARG%"
 if not defined APITOKEN set "APITOKEN=%TS_API_TOKEN%"
+set "OAUTHID=%CLIENTID_ARG%"
+if not defined OAUTHID set "OAUTHID=%TS_OAUTH_CLIENT_ID%"
+set "OAUTHSECRET=%CLIENTSECRET_ARG%"
+if not defined OAUTHSECRET set "OAUTHSECRET=%TS_OAUTH_CLIENT_SECRET%"
 if defined APITOKEN (
   set "TAGV=%TAG_ARG%"
   if not defined TAGV set "TAGV=%TS_TAG%"
@@ -270,6 +298,18 @@ if defined APITOKEN (
   if not defined TAILNETARG set "TAILNETARG=%TS_TAILNET%"
   echo ==^> Verifying your tailnet ACL covers the SSH rules (tools/aclcheck) ...
   set "ACLARGS=--token !APITOKEN! --tag !TAGV!"
+  if defined TAILNETARG set "ACLARGS=!ACLARGS! --tailnet !TAILNETARG!"
+  if defined STRICT_ACL_ARG set "ACLARGS=!ACLARGS! --strict"
+  go run ./tools/aclcheck !ACLARGS!
+  if errorlevel 1 exit /b 1
+) else if defined OAUTHID (
+  set "TAGV=%TAG_ARG%"
+  if not defined TAGV set "TAGV=%TS_TAG%"
+  if not defined TAGV set "TAGV=tag:managed"
+  set "TAILNETARG=%TAILNET_ARG%"
+  if not defined TAILNETARG set "TAILNETARG=%TS_TAILNET%"
+  echo ==^> Verifying your tailnet ACL covers the SSH rules (tools/aclcheck) ...
+  set "ACLARGS=--client-id !OAUTHID! --client-secret !OAUTHSECRET! --tag !TAGV!"
   if defined TAILNETARG set "ACLARGS=!ACLARGS! --tailnet !TAILNETARG!"
   if defined STRICT_ACL_ARG set "ACLARGS=!ACLARGS! --strict"
   go run ./tools/aclcheck !ACLARGS!
@@ -335,6 +375,12 @@ go build -trimpath -ldflags="-s -w %LDEXTRA%" -o "%name%" .
 endlocal & exit /b %errorlevel%
 
 :done
+echo.
+echo ==^> Zipping Windows and macOS binaries (avoids SmartScreen/zone blocks) ...
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\TailscaleMe-windows.exe' -DestinationPath 'dist\TailscaleMe-windows.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\TailscaleMe-darwin-amd64' -DestinationPath 'dist\TailscaleMe-darwin-amd64.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\TailscaleMe-darwin-arm64' -DestinationPath 'dist\TailscaleMe-darwin-arm64.zip' -Force"
+
 echo.
 echo Done. Binaries in dist\:
 dir /b dist

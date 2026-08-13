@@ -40,7 +40,7 @@ the executable by the build script.
 
 ## 2. Provide the build-time values
 
-Five build-time values control the binaries. Each is resolved in the same
+Seven build-time values control the binaries. Each is resolved in the same
 order — **command line → environment variable → gitignored file → the default
 compiled into `main.go`** — so the file-only method below is just the
 preferred, secret-safe option.
@@ -52,6 +52,8 @@ preferred, secret-safe option.
 | Windows SSH firewall scope | `--allow-cidr <cidr>` | `ALLOWCIDR` | `.allow-cidr` | `100.64.0.0/10` |
 | Windows SSH password | `--ssh-password <pw>` | `SSHPASSWORD` | `.sshpassword` | empty (random per machine) |
 | Windows SSH password auth | `--ssh-password-auth <no\|keep>` | `SSHPASSAUTH` | `.sshpassauth` | empty (key-only on fresh installs) |
+| OAuth client ID (ACL check) | `--client-id <id>` | `TS_OAUTH_CLIENT_ID` | — | — |
+| OAuth client secret (ACL check) | `--client-secret <s>` | `TS_OAUTH_CLIENT_SECRET` | — | — |
 
 If you provide a `.sshkey` (or `--ssh-key`), the build **validates it as an
 OpenSSH public key** with `ssh-keygen` and refuses to build an invalid one — a
@@ -97,17 +99,27 @@ bash build.sh
 
 The most common reason remote SSH "silently fails" is a customized tailnet ACL
 that doesn't grant the SSH rules. You can catch that **before shipping**:
-create a read-only Tailscale API token (admin console → **Settings → OAuth
-clients** or a personal access token) and let the build verify your ACL:
+create an OAuth client (admin console → **Settings → Trust credentials → OAuth**)
+with read-only scopes and let the build verify your ACL:
 
 ```bash
-TS_API_TOKEN=tskey-api-… bash build.sh          # env var
-bash build.sh --api-token tskey-api-…           # or a flag
+bash build.sh --client-id "your-client-id" --client-secret "your-client-secret"
+# or via env vars:
+TS_OAUTH_CLIENT_ID=... TS_OAUTH_CLIENT_SECRET=... bash build.sh
+```
+
+If you still have a legacy API access token, that works too:
+
+```bash
+bash build.sh --api-token tskey-api-…           # or via env: TS_API_TOKEN=…
 ```
 
 ```bat
 set TS_API_TOKEN=tskey-api-… & build.bat
 build.bat --api-token tskey-api-…
+rem or via OAuth:
+set TS_OAUTH_CLIENT_ID=... & set TS_OAUTH_CLIENT_SECRET=... & build.bat
+build.bat --client-id "your-id" --client-secret "your-secret"
 ```
 
 `tools/aclcheck` then fetches your tailnet ACL and reports which SSH rules are
@@ -202,7 +214,7 @@ Both scripts:
    `ssh-keygen`, and inject it via `-ldflags -X …` (warns if no auth key is
    found anywhere). See
    [§ 2](GETTING_STARTED.md#2-provide-the-build-time-values).
-3. When a `--api-token`/`TS_API_TOKEN` exists, run `tools/aclcheck` to verify
+3. When `--api-token`/`TS_API_TOKEN` or `--client-id`/`--client-secret` is set, run `tools/aclcheck` to verify
    the tailnet ACL still covers the SSH rules (see
    [§ 2 — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional)).
 4. Build the three Windows per-arch installers, then pack them into the
@@ -220,9 +232,9 @@ One file per platform in `dist/` (~5–8 MB each):
 
 | Target machine | File to send | Run as |
 | --- | --- | --- |
-| Any Windows (x86, x64, ARM64; 7–11) | `dist/TailscaleMe-windows.exe` | double-click (UAC prompt) |
-| macOS (Intel) | `dist/TailscaleMe-darwin-amd64` | double-click or terminal, `sudo ./…` |
-| macOS (Apple Silicon) | `dist/TailscaleMe-darwin-arm64` | double-click or terminal, `sudo ./…` |
+| Any Windows (x86, x64, ARM64; 7–11) | `dist/TailscaleMe-windows.zip` | extract, double-click (UAC prompt) |
+| macOS (Intel) | `dist/TailscaleMe-darwin-amd64.zip` | extract, double-click or terminal, `sudo ./…` |
+| macOS (Apple Silicon) | `dist/TailscaleMe-darwin-arm64.zip` | extract, double-click or terminal, `sudo ./…` |
 | Linux x86_64 | `dist/TailscaleMe-linux-amd64` | terminal, `sudo ./…` |
 | Linux ARM64 | `dist/TailscaleMe-linux-arm64` | terminal, `sudo ./…` |
 | Linux 32-bit ARM (Raspberry Pi) | `dist/TailscaleMe-linux-arm` | terminal, `sudo ./…` |

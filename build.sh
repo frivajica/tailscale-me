@@ -25,6 +25,8 @@ Options:
   --ssh-password-auth <no|keep>
                        Windows SSH password auth: ""/no (default) = key-only on fresh installs; keep = leave password auth enabled (env SSHPASSAUTH, file .sshpassauth)
   --api-token <token>  Tailscale API token to verify the ACL covers SSH (env TS_API_TOKEN)
+  --client-id <id>     OAuth client ID for ACL check (env TS_OAUTH_CLIENT_ID)
+  --client-secret <s>  OAuth client secret for ACL check (env TS_OAUTH_CLIENT_SECRET)
   --tailnet <name>     tailnet for the ACL check (default: the token's tailnet)
   --tag <tag:managed>  managed tag the ACL check requires (env TS_TAG)
   --strict-acl         fail the build when an ACL rule is missing
@@ -37,7 +39,7 @@ EOF
 }
 
 AUTHKEY_ARG="" SSHKEY_ARG="" ALLOWCIDR_ARG="" SSHPASS_ARG="" SSHPASSAUTH_ARG=""
-APITOKEN_ARG="" TAILNET_ARG="" TAG_ARG="" STRICT_ACL_ARG=""
+APITOKEN_ARG="" CLIENTID_ARG="" CLIENTSECRET_ARG="" TAILNET_ARG="" TAG_ARG="" STRICT_ACL_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --auth-key)
@@ -58,6 +60,12 @@ while [ $# -gt 0 ]; do
     --api-token)
       [ $# -ge 2 ] || { echo "ERROR: --api-token needs a value" >&2; exit 1; }
       APITOKEN_ARG="$2"; shift 2 ;;
+    --client-id)
+      [ $# -ge 2 ] || { echo "ERROR: --client-id needs a value" >&2; exit 1; }
+      CLIENTID_ARG="$2"; shift 2 ;;
+    --client-secret)
+      [ $# -ge 2 ] || { echo "ERROR: --client-secret needs a value" >&2; exit 1; }
+      CLIENTSECRET_ARG="$2"; shift 2 ;;
     --tailnet)
       [ $# -ge 2 ] || { echo "ERROR: --tailnet needs a value" >&2; exit 1; }
       TAILNET_ARG="$2"; shift 2 ;;
@@ -175,14 +183,19 @@ if [ -n "$PWAuth" ]; then
 fi
 
 # Optional preflight: verify the tailnet ACL covers the SSH rules. Only runs
-# when an API token is provided (--api-token / $TS_API_TOKEN); --strict-acl
-# turns a missing rule into a hard build failure (set -e aborts the script).
+# when an API token or OAuth credentials are provided; --strict-acl turns a
+# missing rule into a hard build failure (set -e aborts the script).
 APITOKEN="${APITOKEN_ARG:-${TS_API_TOKEN:-}}"
-if [ -n "$APITOKEN" ]; then
+CLIENTID="${CLIENTID_ARG:-${TS_OAUTH_CLIENT_ID:-}}"
+CLIENTSECRET="${CLIENTSECRET_ARG:-${TS_OAUTH_CLIENT_SECRET:-}}"
+if [ -n "$APITOKEN" ] || [ -n "$CLIENTID" ]; then
   TAILNET_ARG="${TAILNET_ARG:-${TS_TAILNET:-}}"
   TAG="${TAG_ARG:-${TS_TAG:-tag:managed}}"
   echo "==> Verifying your tailnet ACL covers the SSH rules (tools/aclcheck) ..."
-  ACLARGS=(--token "$APITOKEN" --tag "$TAG")
+  ACLARGS=(--tag "$TAG")
+  [ -n "$APITOKEN" ] && ACLARGS+=(--token "$APITOKEN")
+  [ -n "$CLIENTID" ] && ACLARGS+=(--client-id "$CLIENTID")
+  [ -n "$CLIENTSECRET" ] && ACLARGS+=(--client-secret "$CLIENTSECRET")
   [ -n "$TAILNET_ARG" ] && ACLARGS+=(--tailnet "$TAILNET_ARG")
   [ -n "$STRICT_ACL_ARG" ] && ACLARGS+=(--strict)
   go run ./tools/aclcheck "${ACLARGS[@]}"
@@ -241,6 +254,16 @@ build linux amd64
 build linux arm64
 build linux arm 6
 build linux 386
+
+echo ""
+echo "==> Zipping Windows and macOS binaries (avoids SmartScreen/zone blocks) ..."
+if command -v zip >/dev/null 2>&1; then
+  (cd dist && zip TailscaleMe-windows.zip TailscaleMe-windows.exe)
+  (cd dist && zip TailscaleMe-darwin-amd64.zip TailscaleMe-darwin-amd64)
+  (cd dist && zip TailscaleMe-darwin-arm64.zip TailscaleMe-darwin-arm64)
+else
+  echo "WARNING: zip not found - skipping zip step (binaries may be blocked on Windows/macOS)."
+fi
 
 echo ""
 echo "Done. Binaries in dist/:"

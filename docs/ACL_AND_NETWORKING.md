@@ -55,9 +55,11 @@ Replace `email@example.com` with your own account. On the default (all-allow)
 tailnet, SSH already works without these.
 
 The build can check these rules for you before you ship binaries — pass a
-Tailscale API token (`TS_API_TOKEN` or `--api-token`) and `tools/aclcheck`
-verifies your ACL and reports anything missing (add `--strict-acl` to fail the
-build). See [Getting started — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional).
+Tailscale API token (`TS_API_TOKEN` or `--api-token`) or OAuth credentials
+(`TS_OAUTH_CLIENT_ID`/`TS_OAUTH_CLIENT_SECRET` or `--client-id`/`--client-secret`)
+and `tools/aclcheck` verifies your ACL and reports anything missing (add
+`--strict-acl` to fail the build). See
+[Getting started — Verify your ACL at build time](GETTING_STARTED.md#verify-your-acl-at-build-time-optional).
 
 ## Enable route acceptance on your own devices
 
