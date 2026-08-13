@@ -25,7 +25,7 @@ func main() {
 	if err := initLog(); err != nil {
 		fmt.Printf("[%s] WARNING: could not open log file: %v\n", ts(), err)
 	}
-	step("Welcome to the Tailscale family-business setup tool (build %s).", buildVersion)
+	step("Welcome to the TailscaleMe setup tool (build %s).", buildVersion)
 	step("A full log of this session is saved to: %s", logPath())
 
 	if err := ensureElevated(); err != nil {

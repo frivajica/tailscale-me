@@ -1,15 +1,15 @@
 {
-  "comment": "Tailscale ACL guidance for the family-business setup tool.",
-  "howToUse": "In the Tailscale admin console open the ACL / policy editor and add the autoApprovers block below. The 'routes' CIDRs must match the subnetRoute constant in main.go EXACTLY. The auth key embedded in TailscaleMe.exe must be generated with the tag:family-biz tag, otherwise auto-approval will not match this identity.",
+  "comment": "Tailscale ACL guidance for the TailscaleMe setup tool.",
+  "howToUse": "In the Tailscale admin console open the ACL / policy editor and add the autoApprovers block below. The 'routes' CIDRs must match the subnetRoute constant in main.go EXACTLY. The auth key embedded in the TailscaleMe binary must be generated with the tag:managed tag (or a tag of your choosing), otherwise auto-approval will not match this identity.",
   "autoApprovers": {
     "routes": {
-      "192.168.1.0/24": ["tag:family-biz"]
+      "192.168.1.0/24": ["tag:managed"]
     }
   },
   "notes": [
     "Auto-approval means advertised routes come up without clicking Approve in the admin console.",
-    "On the OWNER's devices run: tailscale up --accept-routes   (or enable 'accept routes' in the GUI) so the remote LAN becomes reachable.",
-    "Do not advertise a subnet that overlaps your home LAN - the route is ignored and may cause conflicts.",
+    "On the accepting devices run: tailscale up --accept-routes   (or enable 'accept routes' in the GUI) so the remote LAN becomes reachable.",
+    "Do not advertise a subnet that overlaps a local LAN - the route is ignored and may cause conflicts.",
     "Keep the auth key single-use and short-lived; it is embedded in the executable."
   ]
 }
