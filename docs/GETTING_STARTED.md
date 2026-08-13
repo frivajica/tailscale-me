@@ -7,12 +7,12 @@ remains — see [Deploying](DEPLOYING.md).
 
 ## Prerequisites
 
-- **Go 1.20+** to run the build scripts. The pinned `go 1.20` toolchain is what
-  keeps the Windows binaries compatible with Windows 7/8.
+- A recent Go toolchain to run the build scripts; they pin Go 1.20 (via
+  `GOTOOLCHAIN`) so the Windows binaries stay compatible with Windows 7/8.
 - A **Tailscale account** with admin rights on a tailnet (create one free at
   https://login.tailscale.com).
-- The ability to run the built binaries on the remote machines is not needed by
-  you — the recipient does that part.
+- You don't need any access to the remote machines — the recipient runs the
+  binary.
 
 ## 1. Generate an auth key
 
@@ -23,8 +23,8 @@ the executable by the build script.
 1. Log in to https://login.tailscale.com → **Settings → Keys** (left sidebar).
 2. Click **Generate auth key**.
 3. Configure it:
-   - **Reusable**: turn **ON** (covers the Windows 7 reboot re-run and any
-     retry; you revoke it later).
+   - **Reusable**: turn **ON** (covers the Windows 7 restart re-run — see
+     [Deploying](DEPLOYING.md#windows) — and any retry; you revoke it later).
    - **Expiration**: **7 days**.
    - **Tags**: type `tag:managed`. If it's a brand-new tag, Tailscale asks to
      add it to your tailnet's ACLs as a tag owner — accept. (Use any tag you

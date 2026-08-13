@@ -21,8 +21,8 @@ wait, right `tailscale up` flags.
 1. Detects the OS/architecture and picks the matching official package:
    - **Windows 7 / 8 / 8.1** → pinned **Tailscale v1.44.3** MSI (the final
      release supporting those OSes). On Windows 7 it also applies the
-     **KB2921916** hotfix with a *clear warning + yes/no prompt* before any
-     reboot.
+     **KB2921916** hotfix (a Microsoft update modern Go programs need on
+     Windows 7) with a *clear warning + yes/no prompt* before any reboot.
    - **Windows 10 / 11** → latest stable MSI (amd64/arm64/x86).
    - **macOS** → headless standalone `tailscaled` client (no GUI app): via
      **Homebrew** if present, else the **Go toolchain**, else printed manual
@@ -35,12 +35,14 @@ wait, right `tailscale up` flags.
 3. Installs the client, then waits for the daemon to come up (poll, not a
    blind sleep).
 4. Connects and advertises the subnet:
-   `tailscale up --auth-key=… [--unattended] --accept-dns --advertise-routes=192.168.1.0/24`.
+   `tailscale up --auth-key=… [--unattended] --accept-dns --advertise-routes=192.168.1.0/24`
+   (flags vary by platform: `--unattended` on Windows, `--accept-dns` on macOS).
 5. Logs every step to `TailscaleMe.log` (in the temp folder), deletes the temp
    installer, and waits for Enter so the user can read the result.
 
-The Windows binaries embed a UAC manifest (`requireAdministrator`) so Windows
-elevates them on launch; Linux/macOS builds require `sudo`. Everything is built
+The Windows binaries embed a UAC (User Account Control) manifest
+(`requireAdministrator`) so Windows elevates them on launch; Linux/macOS builds
+require `sudo`. Everything is built
 with **Go 1.20** so the Windows binaries also run on Win7/8 (current Go
 toolchains produce binaries that refuse to start there).
 
@@ -48,7 +50,8 @@ toolchains produce binaries that refuse to start there).
 
 1. **Configure your tailnet** — generate a `tag:managed` auth key in the
    [admin console](https://login.tailscale.com/admin/settings/keys) and paste
-   the `autoApprovers` ACL rule.
+   the `autoApprovers` ACL rule from
+   [ACL and networking](docs/ACL_AND_NETWORKING.md).
 2. **Build** — save the key as a gitignored `.authkey` file and run
    `bash build.sh` (or `build.bat` on Windows). One universal Windows launcher
    plus one binary per macOS/Linux platform land in `dist/`.

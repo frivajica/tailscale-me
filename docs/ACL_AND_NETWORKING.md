@@ -54,7 +54,7 @@ and rebuild (see [Getting started](GETTING_STARTED.md#customizing-the-subnet)).
 ## macOS headless mode
 
 macOS never installs the GUI app. It uses the standalone `tailscaled` client
-(the wiki-supported "Tailscaled on macOS" route), which:
+(the officially documented "Tailscaled on macOS" route), which:
 
 - runs as a LaunchDaemon
   (`/Library/LaunchDaemons/com.tailscale.tailscaled.plist`) and starts

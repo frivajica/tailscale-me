@@ -14,7 +14,8 @@ Windows 7 hotfix and the network config are fetched and verified automatically
 by the tool.
 
 Pre-flight before sending: create `.authkey` with a fresh key and re-run the
-build. Never ship binaries whose key is still the placeholder.
+build. Never ship binaries whose key is still the placeholder
+(`tskey-auth-YOUR_AUTH_KEY_HERE`).
 
 ## Per-platform instructions
 
@@ -35,7 +36,7 @@ build. Never ship binaries whose key is still the placeholder.
 Double-click the file, or run in a terminal:
 
 ```bash
-sudo ./TailscaleMe-darwin-arm64
+sudo ./TailscaleMe-darwin-arm64   # use -amd64 on Intel
 ```
 
 Double-clicking opens a Terminal window that runs the tool under `sudo` (type
